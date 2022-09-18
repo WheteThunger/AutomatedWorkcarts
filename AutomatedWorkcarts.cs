@@ -210,7 +210,7 @@ namespace Oxide.Plugins
                     return;
                 }
 
-                if (!_trainManager.CanHaveMoreConductors())
+                if (!_trainManager.CanHaveMoreConductors(trainCar))
                 {
                     ReplyToPlayer(player, Lang.ErrorMaxConductors, _trainManager.TrainCount, _pluginConfig.MaxConductors);
                     return;
@@ -1073,7 +1073,7 @@ namespace Oxide.Plugins
                     {
                         if (workcart != null
                             && !IsTrainOwned(workcart)
-                            && _trainManager.CanHaveMoreConductors()
+                            && _trainManager.CanHaveMoreConductors(workcart)
                             && !_trainManager.HasTrainController(workcart))
                         {
                             _trainManager.TryCreateTrainController(workcart, workcartData: workcartData);
@@ -1953,7 +1953,7 @@ namespace Oxide.Plugins
                     if (IsTrainOwned(trainCar))
                         return;
 
-                    if (!_trainManager.CanHaveMoreConductors())
+                    if (!_trainManager.CanHaveMoreConductors(trainCar))
                         return;
 
                     _trainManager.TryCreateTrainController(leadWorkcart, TriggerData);
@@ -3213,6 +3213,23 @@ namespace Oxide.Plugins
             private bool _isUnloading = false;
 
             public int TrainCount => _trainControllers.Count;
+            public int SpawnedTrainCount
+            {
+                get
+                {
+                    var count = 0;
+
+                    foreach (var trainController in _trainControllers)
+                    {
+                        if (SpawnedTrainCarTracker.HasWorkcart(trainController.PrimaryWorkcart))
+                        {
+                            count++;
+                        }
+                    }
+
+                    return count;
+                }
+            }
 
             public TrainEngine[] GetAutomatedWorkcarts()
             {
@@ -3233,8 +3250,21 @@ namespace Oxide.Plugins
                 SpawnedTrainCarTracker = spawnedTrainCarTracker;
             }
 
-            public bool CanHaveMoreConductors() => PluginConfig.MaxConductors < 0
-                || TrainCount < PluginConfig.MaxConductors;
+            public bool CanHaveMoreConductors(TrainCar trainCar)
+            {
+                if (PluginConfig.MaxConductors < 0)
+                    return true;
+
+                if (TrainCount < PluginConfig.MaxConductors)
+                    return true;
+
+                // Trains spawned by triggers are not subject to the conductor limit.
+                if (SpawnedTrainCarTracker.HasWorkcart(trainCar))
+                    return true;
+
+                // Trains spawned by triggers do not count toward the conductor limit.
+                return (TrainCount - SpawnedTrainCount) < PluginConfig.MaxConductors;
+            }
 
             public TrainController GetTrainController(TrainCar trainCar)
             {
@@ -3351,7 +3381,11 @@ namespace Oxide.Plugins
 
                 foreach (var trainController in _trainControllers.ToArray())
                 {
-                    trainController.Kill();
+                    // Don't reset conductors that are on trains spawned by this plugin.
+                    if (!SpawnedTrainCarTracker.HasWorkcart(trainController.PrimaryWorkcart))
+                    {
+                        trainController.Kill();
+                    }
                 }
 
                 return trainCount;

@@ -106,7 +106,7 @@ Workcarts can be spawned via spawn triggers. The following steps will walk you t
   - If the route name is specified, the train will respond to both global triggers (i.e., triggers that do not specify a route) and triggers assigned to that route. The train will ignore triggers assigned other routes.
   - If the route name is **not** specified, the train will respond only to global triggers.
   - The train will start driving according to `DefaultSpeed` and `DefaultTrackSelection` in the plugin configuration.
-- `aw.resetall` -- Resets all automated trains to normal. This removes all conductors.
+- `aw.resetall` -- Resets all automated trains to normal. This removes all conductors. **Exception:** Trains spawned by this plugin will keep their conductors.
 
 ### Manage triggers
 
@@ -251,7 +251,7 @@ Default configuration:
   - `LootTunnel` (`true` or `false`) -- This affects straight tunnels that spawn NPCs and loot.
   - `Intersection` (`true` or `false`) -- This affects 3-way intersections.
   - `LargeIntersection` (`true` or `false`) -- This affects 4-way intersections.
-- `MaxConductors` -- The maximum number of automated trains allowed on the map at once. Set to `-1` for no limit. Note that having multiple automated workcarts on a single train will count as only one conductor.
+- `MaxConductors` -- The maximum number of automated trains allowed on the map at once. Set to `-1` for no limit. Note that having multiple automated workcarts on a single train will count as only one conductor. **Exception:** Trains spawned by this plugin are not subject to the conductor limit, nor do they count toward the conductor limit. This exception is intentional because it allows you to force specific trains to always have conductors while limiting the conductors in other areas.
 - `ConductorOutfit` -- Items to use for the outfit of each conductor.
 - `ColoredMapMarker`
   - `Enabled` (`true` or `false`) -- Whether to enable colored map markers. Enabling this has a performance cost.
@@ -294,7 +294,7 @@ A train can only be assigned a route when it receives a conductor. This can be d
 
 #### Will this plugin cause lag?
 
-This plugin's logic is optimized for performance and should not cause lag. However, trains moving along the tracks does incur some overhead, regardless of whether a player or NPC is driving them. Therefore, having many automated trains may reduce server FPS. One way to address this is to limit the number of automated trains with the `MaxConductors` configuration option.
+This plugin's logic is optimized for performance and should not cause lag. However, trains moving along the tracks does incur some overhead, regardless of whether a player or NPC is driving them. Therefore, having many automated trains may reduce both client and server FPS. One way to address this is to limit the number of automated trains with the `MaxConductors` configuration option.
 
 #### Is this compatible with the Cargo Train Event plugin?
 
@@ -305,7 +305,7 @@ Generally, yes. However, if all trains are automated, the Cargo Train Event will
 The **best practice** is to have separate, independent tracks for player vs automated trains. However, automated trains do have collision handling logic that makes them somewhat compatible with player tracks.
 
 - When an automated train is rear-ended, if it's currently stopping or waiting at a stop, it will depart early.
-- When an automated train collides with another train in front of it, its engine stops for a few seconds to allow the forward train to attempt passage.
+- When an automated train collides with another train in front of it, its engine stops for a few seconds to allow the forward train to get some distance. This is especially useful for intersections since it allows one train to attempt passage while the other backs off.
 - When two automated trains collide head-on, the slower one (or a random one if they are going the same speed) will explode.
 - When an automated train collides with a non-automated train in a manner other than a rear-end, having the `BulldozeOffendingWorkcarts` configuration option set to `true` will cause the non-automated train to be destroyed.
 
