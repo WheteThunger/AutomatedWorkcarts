@@ -333,26 +333,26 @@ The **best practice** is to have separate, independent tracks for player vs auto
 #### API_AutomateWorkcart
 
 ```csharp
-bool API_AutomateWorkcart(TrainEngine workcart)
+bool API_AutomateWorkcart(TrainEngine trainEngine)
 ```
 
-Automates the specified workcart, along with all workcarts attached to the same train. Returns `true` if successful, or if already automated. Returns `false` if it was blocked by another plugin.
+Automates the specified train engine, along with all train engines attached to the same train. Returns `true` if successful, or if already automated. Returns `false` if it was blocked by another plugin.
 
 #### API_StopAutomatingWorkcart
 
 ```csharp
-void API_StopAutomatingWorkcart(TrainEngine workcart)
+void API_StopAutomatingWorkcart(TrainEngine trainEngine)
 ```
 
-Stops automating the specified workcart, along with all workcarts attached to the same train.
+Stops automating the specified train engine, along with all train engines attached to the same train.
 
 #### API_IsWorkcartAutomated
 
 ```csharp
-bool API_IsWorkcartAutomated(TrainEngine workcart)
+bool API_IsWorkcartAutomated(TrainEngine trainEngine)
 ```
 
-Returns `true` if the given workcart is automated, else `false`.
+Returns `true` if the given train engine is automated, else `false`.
 
 #### API_GetAutomatedWorkcarts
 
@@ -360,34 +360,34 @@ Returns `true` if the given workcart is automated, else `false`.
 TrainEngine[] API_GetAutomatedWorkcarts()
 ```
 
-Returns an array of all workcarts that are currently automated.
+Returns an array of all train engines that are currently automated.
 
 ## Developer Hooks
 
 #### OnWorkcartAutomationStart
 
 ```csharp
-bool? OnWorkcartAutomationStart(TrainEngine workcart)
+bool? OnWorkcartAutomationStart(TrainEngine trainEngine)
 ```
 
-- Called when a workcart is about to become automated
-- Returning `false` will prevent the workcart from becoming automated
+- Called when a train engine is about to become automated
+- Returning `false` will prevent the train engine from becoming automated
 - Returning `null` will result in the default behavior
 
 #### OnWorkcartAutomationStarted
 
 ```csharp
-void OnWorkcartAutomationStarted(TrainEngine workcart)
+void OnWorkcartAutomationStarted(TrainEngine trainEngine)
 ```
 
-- Called after a workcart has become automated
+- Called after a train engine has become automated
 - No return behavior
 
 #### OnWorkcartAutomationStopped
 
 ```csharp
-void OnWorkcartAutomationStopped(TrainEngine workcart)
+void OnWorkcartAutomationStopped(TrainEngine trainEngine)
 ```
 
-- Called after a workcart has stopped being automated
+- Called after a train engine has stopped being automated
 - No return behavior
