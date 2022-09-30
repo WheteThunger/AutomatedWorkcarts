@@ -21,7 +21,7 @@ using static TrainTrackSpline;
 
 namespace Oxide.Plugins
 {
-    [Info("Automated Workcarts", "WhiteThunder", "0.31.0")]
+    [Info("Automated Workcarts", "WhiteThunder", "0.32.0")]
     [Description("Automates workcarts with NPC conductors.")]
     internal class AutomatedWorkcarts : CovalencePlugin
     {
@@ -212,7 +212,7 @@ namespace Oxide.Plugins
 
                 if (!_trainManager.CanHaveMoreConductors(trainCar))
                 {
-                    ReplyToPlayer(player, Lang.ErrorMaxConductors, _trainManager.TrainCount, _pluginConfig.MaxConductors);
+                    ReplyToPlayer(player, Lang.ErrorMaxConductors, _trainManager.CountedConductors, _pluginConfig.MaxConductors);
                     return;
                 }
 
@@ -1889,10 +1889,13 @@ namespace Oxide.Plugins
 
         private class TrainTrigger : TriggerBase
         {
-            public static TrainTrigger AddToGameObject(GameObject gameObject, TriggerData triggerData, TrainManager trainManager)
+            public static TrainTrigger AddToGameObject(GameObject gameObject, TrainManager trainManager, TriggerData triggerData, BaseTriggerInstance triggerInstance)
             {
                 var trainTrigger = gameObject.AddComponent<TrainTrigger>();
-                trainTrigger.Init(triggerData, trainManager);
+                trainTrigger._trainManager = trainManager;
+                trainTrigger._triggerInstance = triggerInstance;
+                trainTrigger.TriggerData = triggerData;
+                trainTrigger.interestLayers = Layers.Mask.Vehicle_World;
                 return trainTrigger;
             }
 
@@ -1900,6 +1903,7 @@ namespace Oxide.Plugins
             public const float TriggerRadius = 1f;
 
             public TriggerData TriggerData { get; private set; }
+            private BaseTriggerInstance _triggerInstance;
             private TrainManager _trainManager;
 
             public override void OnEntityEnter(BaseEntity entity)
@@ -1911,14 +1915,6 @@ namespace Oxide.Plugins
                     HandleTrainCar(trainCar);
                 }
                 _pluginInstance?.TrackEnd();
-            }
-
-            private void Init(TriggerData triggerData, TrainManager trainManager)
-            {
-                TriggerData = triggerData;
-                _trainManager = trainManager;
-
-                interestLayers = Layers.Mask.Vehicle_World;
             }
 
             private void HandleTrainCar(TrainCar trainCar)
@@ -1953,10 +1949,20 @@ namespace Oxide.Plugins
                     if (IsTrainOwned(trainCar))
                         return;
 
-                    if (!_trainManager.CanHaveMoreConductors(trainCar))
-                        return;
+                    var spawnedByThisTrigger = _triggerInstance.DidSpawnTrain(trainCar);
+                    if (!spawnedByThisTrigger)
+                    {
+                        // Spawner/Conductor triggers should only automate trains spawned by the same trigger.
+                        if (TriggerData.IsSpawner)
+                            return;
 
-                    _trainManager.TryCreateTrainController(leadTrainEngine, TriggerData);
+                        // Don't add a conductor if the limit is reached, unless the train was spawned by this trigger.
+                        if (!_trainManager.CanHaveMoreConductors(trainCar))
+                            return;
+                    }
+
+                    // The train is exempt from conductor limits if it was spawned by this trigger.
+                    _trainManager.TryCreateTrainController(leadTrainEngine, TriggerData, countsTowardConductorLimit: !spawnedByThisTrigger);
                     return;
                 }
 
@@ -2047,7 +2053,7 @@ namespace Oxide.Plugins
             }
 
             [JsonIgnore]
-            public bool IsSpawner => (TrainCars?.Length ?? 0) > 0;
+            public bool IsSpawner => TrainCars?.Length > 0;
 
             [JsonIgnore]
             public TrainTriggerType TriggerType => TunnelType != null ? TrainTriggerType.Tunnel : TrainTriggerType.Map;
@@ -2327,7 +2333,7 @@ namespace Oxide.Plugins
                 sphereCollider.radius = TrainTrigger.TriggerRadius;
                 sphereCollider.gameObject.layer = TrainTrigger.TriggerLayer;
 
-                _trainTrigger = TrainTrigger.AddToGameObject(_gameObject, TriggerData, TrainManager);
+                _trainTrigger = TrainTrigger.AddToGameObject(_gameObject, TrainManager, TriggerData, this);
 
                 if (TriggerData.IsSpawner)
                 {
@@ -2410,6 +2416,11 @@ namespace Oxide.Plugins
             {
                 UnityEngine.Object.Destroy(_gameObject);
                 KillTrains();
+            }
+
+            public bool DidSpawnTrain(TrainCar trainCar)
+            {
+                return _spawnedTrainCars?.Contains(trainCar) ?? false;
             }
 
             private void Enable()
@@ -3213,7 +3224,7 @@ namespace Oxide.Plugins
             private bool _isUnloading = false;
 
             public int TrainCount => _trainControllers.Count;
-            public int SpawnedTrainCount
+            public int CountedConductors
             {
                 get
                 {
@@ -3221,7 +3232,7 @@ namespace Oxide.Plugins
 
                     foreach (var trainController in _trainControllers)
                     {
-                        if (SpawnedTrainCarTracker.ContainsTrainCar(trainController.PrimaryTrainEngine))
+                        if (trainController.CountsTowardConductorLimit)
                         {
                             count++;
                         }
@@ -3255,15 +3266,7 @@ namespace Oxide.Plugins
                 if (PluginConfig.MaxConductors < 0)
                     return true;
 
-                if (TrainCount < PluginConfig.MaxConductors)
-                    return true;
-
-                // Trains spawned by triggers are not subject to the conductor limit.
-                if (SpawnedTrainCarTracker.ContainsTrainCar(trainCar))
-                    return true;
-
-                // Trains spawned by triggers do not count toward the conductor limit.
-                return (TrainCount - SpawnedTrainCount) < PluginConfig.MaxConductors;
+                return CountedConductors < PluginConfig.MaxConductors;
             }
 
             public TrainController GetTrainController(TrainCar trainCar)
@@ -3279,7 +3282,7 @@ namespace Oxide.Plugins
                 return GetTrainController(trainCar) != null;
             }
 
-            public bool TryCreateTrainController(TrainEngine primaryTrainEngine, TriggerData triggerData = null, TrainEngineData trainEngineData = null)
+            public bool TryCreateTrainController(TrainEngine primaryTrainEngine, TriggerData triggerData = null, TrainEngineData trainEngineData = null, bool countsTowardConductorLimit = true)
             {
                 foreach (var trainCar in primaryTrainEngine.completeTrain.trainCars)
                 {
@@ -3299,7 +3302,7 @@ namespace Oxide.Plugins
                     };
                 }
 
-                var trainController = new TrainController(this, trainEngineData);
+                var trainController = new TrainController(this, trainEngineData, countsTowardConductorLimit);
                 _trainControllers.Add(trainController);
 
                 var primaryTrainEngineController = TrainEngineController.AddToEntity(primaryTrainEngine, trainController);
@@ -3381,11 +3384,11 @@ namespace Oxide.Plugins
 
                 foreach (var trainController in _trainControllers.ToArray())
                 {
-                    // Don't reset conductors that are on trains spawned by this plugin.
-                    if (!SpawnedTrainCarTracker.ContainsTrainCar(trainController.PrimaryTrainEngine))
-                    {
-                        trainController.Kill();
-                    }
+                    // Don't reset conductors that are on spawned by conductor triggers.
+                    if (!trainController.CountsTowardConductorLimit)
+                        continue;
+
+                    trainController.Kill();
                 }
 
                 return trainCount;
@@ -3564,6 +3567,7 @@ namespace Oxide.Plugins
             public TrainManager TrainManager { get; private set; }
             public TrainEngineController PrimaryTrainEngineController { get; private set; }
             public bool IsDestroying { get; private set; }
+            public bool CountsTowardConductorLimit { get; private set; }
             public TrainEngine PrimaryTrainEngine => PrimaryTrainEngineController.TrainEngine;
             public Configuration PluginConfig => TrainManager.PluginConfig;
 
@@ -3605,11 +3609,12 @@ namespace Oxide.Plugins
             public EngineSpeeds DepartureThrottle =>
                 _trainState?.NextThrottle ?? PrimaryTrainEngine.CurThrottleSetting;
 
-            public TrainController(TrainManager trainManager, TrainEngineData workcarData)
+            public TrainController(TrainManager trainManager, TrainEngineData workcarData, bool countsTowardConductorLimit)
             {
                 TrainManager = trainManager;
                 _trainEngineData = workcarData;
                 _nearbyPlayerFilter = NearbyPlayerFilter;
+                CountsTowardConductorLimit = countsTowardConductorLimit;
             }
 
             public void AddTrainCarComponent(ITrainCarComponent trainCarComponent)
@@ -4993,8 +4998,8 @@ namespace Oxide.Plugins
 
         private string GetConductorCountMessage(IPlayer player) =>
              _pluginConfig.MaxConductors >= 0
-             ? GetMessage(player, Lang.InfoConductorCountLimited, _trainManager.TrainCount, _pluginConfig.MaxConductors)
-             : GetMessage(player, Lang.InfoConductorCountUnlimited, _trainManager.TrainCount);
+             ? GetMessage(player, Lang.InfoConductorCountLimited, _trainManager.CountedConductors, _pluginConfig.MaxConductors)
+             : GetMessage(player, Lang.InfoConductorCountUnlimited, _trainManager.CountedConductors);
 
         private class Lang
         {

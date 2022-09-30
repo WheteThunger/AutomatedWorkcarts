@@ -106,7 +106,7 @@ Workcarts can be spawned via spawn triggers. The following steps will walk you t
   - If the route name is specified, the train will respond to both global triggers (i.e., triggers that do not specify a route) and triggers assigned to that route. The train will ignore triggers assigned other routes.
   - If the route name is **not** specified, the train will respond only to global triggers.
   - The train will start driving according to `DefaultSpeed` and `DefaultTrackSelection` in the plugin configuration.
-- `aw.resetall` -- Resets all automated trains to normal. This removes all conductors. **Exception:** Trains spawned by this plugin will keep their conductors.
+- `aw.resetall` -- Resets all automated trains to normal. This removes all conductors. **Exception:** Trains spawned by conductor triggers will keep their conductors.
 
 ### Manage triggers
 
@@ -251,7 +251,7 @@ Default configuration:
   - `LootTunnel` (`true` or `false`) -- This affects straight tunnels that spawn NPCs and loot.
   - `Intersection` (`true` or `false`) -- This affects 3-way intersections.
   - `LargeIntersection` (`true` or `false`) -- This affects 4-way intersections.
-- `MaxConductors` -- The maximum number of automated trains allowed on the map at once. Set to `-1` for no limit. Note that having multiple automated workcarts on a single train will count as only one conductor. **Exception:** Trains spawned by this plugin are not subject to the conductor limit, nor do they count toward the conductor limit. This exception is intentional because it allows you to force specific trains to always have conductors while limiting the conductors in other areas.
+- `MaxConductors` -- The maximum number of automated trains allowed on the map at once. Set to `-1` for no limit. Note that having multiple automated workcarts on a single train will count as only one conductor. **Exception:** Trains spawned by conductor triggers are not subject to the conductor limit, nor do they count toward the conductor limit. This exception is intentional because it allows you to force specific trains to always have conductors while limiting the conductors in other areas.
 - `ConductorOutfit` -- Items to use for the outfit of each conductor.
 - `ColoredMapMarker`
   - `Enabled` (`true` or `false`) -- Whether to enable colored map markers. Enabling this has a performance cost.
