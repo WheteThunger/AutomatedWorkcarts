@@ -1252,6 +1252,9 @@ namespace Oxide.Plugins
                 ? frontTrainCar.frontCoupling
                 : frontTrainCar.rearCoupling;
 
+            if (rearCouplingTransform == null)
+                return null;
+
             var finalDistance = Math.Abs(rearCouplingTransform.localPosition.z) + GetTrainCarFrontCouplingOffsetZ(trainCarPrefab.PrefabPath);
             var spawnDistance = Mathf.Max(finalDistance, 22);
 
@@ -2547,15 +2550,20 @@ namespace Oxide.Plugins
                             rotation = Quaternion.LookRotation(rotation * -Vector3.forward);
                         }
 
-                        previousTrainCar = SpawnTrainCar(trainEnginePrefab, worldPosition, rotation);
+                        var nextTrainCar = SpawnTrainCar(trainEnginePrefab, worldPosition, rotation);
+                        if (nextTrainCar == null)
+                            break;
+
+                        previousTrainCar = nextTrainCar;
                     }
                     else
                     {
-                        previousTrainCar = AddTrainCar(previousTrainCar, previousTrainCarPrefab, trainCarPrefab, trackSelection);
-                    }
+                        var nextTrainCar = AddTrainCar(previousTrainCar, previousTrainCarPrefab, trainCarPrefab, trackSelection);
+                        if (nextTrainCar == null)
+                            break;
 
-                    if ((object)previousTrainCar == null)
-                        break;
+                        previousTrainCar = nextTrainCar;
+                    }
 
                     previousTrainCarPrefab = trainCarPrefab;
 
