@@ -118,7 +118,7 @@ Workcarts can be spawned via spawn triggers. The following steps will walk you t
   - Speed options: `Hi` | `Med` | `Lo` | `Zero`.
   - Direction options: `Fwd` | `Rev` | `Invert`.
   - Track selection options: `Default` | `Left` | `Right` | `Swap`.
-  - Train car options: `Locomotive` | `Workcart` | `WorkcartCovered` | `WagonA` | `WagonB` | `WagonC` | `WagonFuel` | `WagonLoot` | `WagonResource`
+  - Train car options: `Locomotive` | `Sedan` | `Workcart` | `WorkcartCovered` | `WagonA` | `WagonB` | `WagonC` | `WagonFuel` | `WagonLoot` | `WagonResource`
   - Other options:
     - `Conductor` -- Adds a conductor to the train if not already present. A good place to put `Conductor` triggers is on workcart spawn locations, such as the vanilla spawns in the underground maintenance tunnels. This option can also be combined with the `Spawn` option to automatically spawn an automated train.
       - Note: Player-owned trains cannot receive conductors. Vanilla trains don't have owners, but most plugins that spawn vehicles for players will assign ownership by setting the `OwnerID` property of the vehicle.
@@ -141,7 +141,7 @@ Workcarts can be spawned via spawn triggers. The following steps will walk you t
 - `aw.removetrigger <id>` (alias: `awt.remove`) -- Removes the specified trigger.
 - `aw.enabletrigger <id>` (alias: `awt.enable`) -- Enables the specified trigger. This is identical to `aw.updatetrigger <id> enabled`.
 - `aw.disabletrigger <id>` (alias: `awt.disable`) -- Disables the specified trigger. This is identical to `aw.updatetrigger <id> disabled`. Disabled triggers are ignored by trains and are colored gray.
-- `aw.settriggertrain <id> <wagon1> <wagon2> ...` (alias: `awt.train`) -- Assigns zero or more train cars to the trigger, replacing the current list of train cars, causing this trigger to automatically spawn a train with the specified workcarts and wagons, connected in order. The wagons will be automatically coupled to the workcart. Allowed values: `Locomotive`, `Workcart`, `WorkcartCovered`, `WagonA`, `WagonB`, `WagonC`, `WagonFuel`, `WagonLoot`, `WagonResource`,. To remove all train cars, run the command without specifying any train cars.
+- `aw.settriggertrain <id> <wagon1> <wagon2> ...` (alias: `awt.train`) -- Assigns zero or more train cars to the trigger, replacing the current list of train cars, causing this trigger to automatically spawn a train with the specified workcarts and wagons, connected in order. The wagons will be automatically coupled to the workcart. Allowed values: `Locomotive`, `Sedan`, `Workcart`, `WorkcartCovered`, `WagonA`, `WagonB`, `WagonC`, `WagonFuel`, `WagonLoot`, `WagonResource`. To remove all train cars, run the command without specifying any train cars.
 - `aw.respawntrigger <id>` (alias: `awt.respawn`) -- Despawns and respawns the train for the specified trigger. When used at a tunnel trigger, trains will be respawned at all instances of the tunnel trigger.
 - `aw.addtriggercommand <id> <command>` (alias: `awt.addcmd`) -- Adds the specified command to the trigger. which will be executed whenever a train passes through the trigger. You can use the magic variable `$id` in the command which will be replaced by the primary workcart's Net ID.
 - `aw.removetriggercommand <id> <number>` (alias: `awt.removecmd`) -- Removes the specified command from the trigger. The command number will be 1, 2, 3, etc. and will be visible on the trigger info when using `aw.showtriggers`.
@@ -177,7 +177,7 @@ Update examples:
 - `awt.update Fwd Hi` -- Updates the trigger's direction to `Fwd`, and speed to `Hi`.
 - `awt.update @Route2` -- Updates the trigger's route to `Route2`.
 
-Spawn exmaples:
+Spawn examples:
 
 - `awt.add Workcart` -- Creates a trigger that will spawn a workcart.
 - `awt.train Workcart WagonA WagonB` -- Updates the trigger to spawn a workcart with one `WagonA` and one `WagonB` wagon coupled behind it.

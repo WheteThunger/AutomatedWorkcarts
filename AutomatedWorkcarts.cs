@@ -1605,6 +1605,7 @@ namespace Oxide.Plugins
                 ["WagonFuel"] = new TrainCarPrefab("WagonFuel", "assets/content/vehicles/train/trainwagonunloadablefuel.entity.prefab"),
                 ["WagonLoot"] = new TrainCarPrefab("WagonLoot", "assets/content/vehicles/train/trainwagonunloadableloot.entity.prefab"),
                 ["WagonResource"] = new TrainCarPrefab("WagonResource", "assets/content/vehicles/train/trainwagonunloadable.entity.prefab"),
+                ["Sedan"] = new TrainCarPrefab("Sedan", "assets/content/vehicles/sedan_a/sedanrail.entity.prefab"),
             };
 
             public static TrainCarPrefab FindPrefab(string trainCarAlias)
