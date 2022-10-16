@@ -4062,12 +4062,30 @@ namespace Oxide.Plugins
             public override void OnEntityEnter(BaseEntity entity)
             {
                 _pluginInstance?.TrackStart();
+                HandleEntityCollision(entity);
+                _pluginInstance?.TrackEnd();
+            }
+
+            private void HandleEntityCollision(BaseEntity entity)
+            {
                 var trainCar = entity as TrainCar;
-                if (trainCar != null)
+                if ((object)trainCar != null)
                 {
                     HandleTrainCar(trainCar);
                 }
-                _pluginInstance?.TrackEnd();
+
+                if (entity is JunkPile || entity is LootContainer)
+                {
+                    var entity2 = entity;
+                    entity.Invoke(() =>
+                    {
+                        if (entity2.IsDestroyed)
+                            return;
+
+                        entity2.Kill();
+                        LogWarning($"Automated train destroyed entity '{entity2.ShortPrefabName}' in its path at {transform.position}.");
+                    }, 0);
+                }
             }
 
             private void HandleTrainCar(TrainCar otherTrainCar)
