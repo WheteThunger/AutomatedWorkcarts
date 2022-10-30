@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
 using Newtonsoft.Json.Converters;
@@ -21,7 +21,7 @@ using static TrainTrackSpline;
 
 namespace Oxide.Plugins
 {
-    [Info("Automated Workcarts", "WhiteThunder", "0.32.0")]
+    [Info("Automated Workcarts", "WhiteThunder", "0.33.0")]
     [Description("Automates workcarts with NPC conductors.")]
     internal class AutomatedWorkcarts : CovalencePlugin
     {
@@ -35,7 +35,7 @@ namespace Oxide.Plugins
         private const string PermissionToggle = "automatedworkcarts.toggle";
         private const string PermissionManageTriggers = "automatedworkcarts.managetriggers";
 
-        private const string ClassicWorkcartPrefab = "assets/content/vehicles/workcart/workcart.entity.prefab";
+        private const string ClassicWorkcartPrefab = "assets/content/vehicles/trains/workcart/workcart.entity.prefab";
 
         private const string ShopkeeperPrefab = "assets/prefabs/npc/bandit/shopkeepers/bandit_shopkeeper.prefab";
         private const string GenericMapMarkerPrefab = "assets/prefabs/tools/map/genericradiusmarker.prefab";
@@ -1596,15 +1596,15 @@ namespace Oxide.Plugins
 
             private static readonly Dictionary<string, TrainCarPrefab> AllowedPrefabs = new Dictionary<string, TrainCarPrefab>(StringComparer.InvariantCultureIgnoreCase)
             {
-                [WorkcartAlias] = new TrainCarPrefab(WorkcartAlias, "assets/content/vehicles/workcart/workcart_aboveground.entity.prefab"),
-                ["WorkcartCovered"] = new TrainCarPrefab("WorkcartCovered", "assets/content/vehicles/workcart/workcart_aboveground2.entity.prefab"),
-                ["Locomotive"] = new TrainCarPrefab("Locomotive", "assets/content/vehicles/locomotive/locomotive.entity.prefab"),
-                ["WagonA"] = new TrainCarPrefab("WagonA", "assets/content/vehicles/train/trainwagona.entity.prefab"),
-                ["WagonB"] = new TrainCarPrefab("WagonB", "assets/content/vehicles/train/trainwagonb.entity.prefab"),
-                ["WagonC"] = new TrainCarPrefab("WagonC", "assets/content/vehicles/train/trainwagonc.entity.prefab"),
-                ["WagonFuel"] = new TrainCarPrefab("WagonFuel", "assets/content/vehicles/train/trainwagonunloadablefuel.entity.prefab"),
-                ["WagonLoot"] = new TrainCarPrefab("WagonLoot", "assets/content/vehicles/train/trainwagonunloadableloot.entity.prefab"),
-                ["WagonResource"] = new TrainCarPrefab("WagonResource", "assets/content/vehicles/train/trainwagonunloadable.entity.prefab"),
+                [WorkcartAlias] = new TrainCarPrefab(WorkcartAlias, "assets/content/vehicles/trains/workcart/workcart_aboveground.entity.prefab"),
+                ["WorkcartCovered"] = new TrainCarPrefab("WorkcartCovered", "assets/content/vehicles/trains/workcart/workcart_aboveground2.entity.prefab"),
+                ["Locomotive"] = new TrainCarPrefab("Locomotive", "assets/content/vehicles/trains/locomotive/locomotive.entity.prefab"),
+                ["WagonA"] = new TrainCarPrefab("WagonA", "assets/content/vehicles/trains/wagons/trainwagona.entity.prefab"),
+                ["WagonB"] = new TrainCarPrefab("WagonB", "assets/content/vehicles/trains/wagons/trainwagonb.entity.prefab"),
+                ["WagonC"] = new TrainCarPrefab("WagonC", "assets/content/vehicles/trains/wagons/trainwagonc.entity.prefab"),
+                ["WagonFuel"] = new TrainCarPrefab("WagonFuel", "assets/content/vehicles/trains/wagons/trainwagonunloadablefuel.entity.prefab"),
+                ["WagonLoot"] = new TrainCarPrefab("WagonLoot", "assets/content/vehicles/trains/wagons/trainwagonunloadableloot.entity.prefab"),
+                ["WagonResource"] = new TrainCarPrefab("WagonResource", "assets/content/vehicles/trains/wagons/trainwagonunloadable.entity.prefab"),
             };
 
             public static TrainCarPrefab FindPrefab(string trainCarAlias)
