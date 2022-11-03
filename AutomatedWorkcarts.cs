@@ -1625,6 +1625,7 @@ namespace Oxide.Plugins
             private const string WagonFuelPrefab = "assets/content/vehicles/trains/wagons/trainwagonunloadablefuel.entity.prefab";
             private const string WagonLootPrefab = "assets/content/vehicles/trains/wagons/trainwagonunloadableloot.entity.prefab";
             private const string WagonResourcePrefab = "assets/content/vehicles/trains/wagons/trainwagonunloadable.entity.prefab";
+            private const string CaboosePrefab = "assets/content/vehicles/trains/caboose/traincaboose.entity.prefab";
 
             private static readonly Dictionary<string, TrainCarPrefab> AllowedPrefabs = new Dictionary<string, TrainCarPrefab>(StringComparer.InvariantCultureIgnoreCase)
             {
@@ -1638,6 +1639,7 @@ namespace Oxide.Plugins
                 ["WagonFuel"] = new TrainCarPrefab("WagonFuel", WagonFuelPrefab),
                 ["WagonLoot"] = new TrainCarPrefab("WagonLoot", WagonLootPrefab),
                 ["WagonResource"] = new TrainCarPrefab("WagonResource", WagonResourcePrefab),
+                ["Caboose"] = new TrainCarPrefab("Caboose", CaboosePrefab),
 
                 ["Locomotive_R"] = new TrainCarPrefab("Locomotive_R", LocomotivePrefab, reverse: true),
                 ["Sedan_R"] = new TrainCarPrefab("Sedan", SedanPrefab),
@@ -1649,6 +1651,7 @@ namespace Oxide.Plugins
                 ["WagonFuel_R"] = new TrainCarPrefab("WagonFuel_R", WagonFuelPrefab, reverse: true),
                 ["WagonLoot_R"] = new TrainCarPrefab("WagonLoot_R", WagonLootPrefab, reverse: true),
                 ["WagonResource_R"] = new TrainCarPrefab("WagonResource_R", WagonResourcePrefab, reverse: true),
+                ["Caboose_R"] = new TrainCarPrefab("Caboose_R", CaboosePrefab, reverse: true),
             };
 
             public static TrainCarPrefab FindPrefab(string trainCarAlias)
