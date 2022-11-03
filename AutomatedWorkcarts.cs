@@ -35,8 +35,6 @@ namespace Oxide.Plugins
         private const string PermissionToggle = "automatedworkcarts.toggle";
         private const string PermissionManageTriggers = "automatedworkcarts.managetriggers";
 
-        private const string ClassicWorkcartPrefab = "assets/content/vehicles/workcart/workcart.entity.prefab";
-
         private const string ShopkeeperPrefab = "assets/prefabs/npc/bandit/shopkeepers/bandit_shopkeeper.prefab";
         private const string GenericMapMarkerPrefab = "assets/prefabs/tools/map/genericradiusmarker.prefab";
         private const string VendingMapMarkerPrefab = "assets/prefabs/deployable/vendingmachine/vending_mapmarker.prefab";
@@ -1616,20 +1614,22 @@ namespace Oxide.Plugins
         {
             public const string WorkcartAlias = "Workcart";
 
-            private const string WorkcartPrefab = "assets/content/vehicles/workcart/workcart_aboveground.entity.prefab";
-            private const string WorkcartCoveredPrefab = "assets/content/vehicles/workcart/workcart_aboveground2.entity.prefab";
-            private const string LocomotivePrefab = "assets/content/vehicles/locomotive/locomotive.entity.prefab";
-            private const string WagonAPrefab = "assets/content/vehicles/train/trainwagona.entity.prefab";
-            private const string WagonBPrefab = "assets/content/vehicles/train/trainwagonb.entity.prefab";
-            private const string WagonCPrefab = "assets/content/vehicles/train/trainwagonc.entity.prefab";
-            private const string WagonFuelPrefab = "assets/content/vehicles/train/trainwagonunloadablefuel.entity.prefab";
-            private const string WagonLootPrefab = "assets/content/vehicles/train/trainwagonunloadableloot.entity.prefab";
-            private const string WagonResourcePrefab = "assets/content/vehicles/train/trainwagonunloadable.entity.prefab";
+            public const string ClassicWorkcartPrefab = "assets/content/vehicles/trains/workcart/workcart.entity.prefab";
+            private const string LocomotivePrefab = "assets/content/vehicles/trains/locomotive/locomotive.entity.prefab";
+            private const string SedanPrefab = "assets/content/vehicles/sedan_a/sedanrail.entity.prefab";
+            private const string WorkcartPrefab = "assets/content/vehicles/trains/workcart/workcart_aboveground.entity.prefab";
+            private const string WorkcartCoveredPrefab = "assets/content/vehicles/trains/workcart/workcart_aboveground2.entity.prefab";
+            private const string WagonAPrefab = "assets/content/vehicles/trains/wagons/trainwagona.entity.prefab";
+            private const string WagonBPrefab = "assets/content/vehicles/trains/wagons/trainwagonb.entity.prefab";
+            private const string WagonCPrefab = "assets/content/vehicles/trains/wagons/trainwagonc.entity.prefab";
+            private const string WagonFuelPrefab = "assets/content/vehicles/trains/wagons/trainwagonunloadablefuel.entity.prefab";
+            private const string WagonLootPrefab = "assets/content/vehicles/trains/wagons/trainwagonunloadableloot.entity.prefab";
+            private const string WagonResourcePrefab = "assets/content/vehicles/trains/wagons/trainwagonunloadable.entity.prefab";
 
             private static readonly Dictionary<string, TrainCarPrefab> AllowedPrefabs = new Dictionary<string, TrainCarPrefab>(StringComparer.InvariantCultureIgnoreCase)
             {
                 ["Locomotive"] = new TrainCarPrefab("Locomotive", LocomotivePrefab),
-                ["Sedan"] = new TrainCarPrefab("Sedan", "assets/content/vehicles/sedan_a/sedanrail.entity.prefab"),
+                ["Sedan"] = new TrainCarPrefab("Sedan", SedanPrefab),
                 [WorkcartAlias] = new TrainCarPrefab(WorkcartAlias, WorkcartPrefab),
                 ["WorkcartCovered"] = new TrainCarPrefab("WorkcartCovered", WorkcartCoveredPrefab),
                 ["WagonA"] = new TrainCarPrefab("WagonA", WagonAPrefab),
@@ -1640,7 +1640,7 @@ namespace Oxide.Plugins
                 ["WagonResource"] = new TrainCarPrefab("WagonResource", WagonResourcePrefab),
 
                 ["Locomotive_R"] = new TrainCarPrefab("Locomotive_R", LocomotivePrefab, reverse: true),
-                ["Sedan_R"] = new TrainCarPrefab("Sedan", "assets/content/vehicles/sedan_a/sedanrail.entity.prefab"),
+                ["Sedan_R"] = new TrainCarPrefab("Sedan", SedanPrefab),
                 [$"{WorkcartAlias}_R"] = new TrainCarPrefab($"{WorkcartAlias}_R", WorkcartPrefab, reverse: true),
                 ["WorkcartCovered_R"] = new TrainCarPrefab("WorkcartCovered_R", WorkcartCoveredPrefab, reverse: true),
                 ["WagonA_R"] = new TrainCarPrefab("WagonA_R", WagonAPrefab, reverse: true),
@@ -2540,7 +2540,7 @@ namespace Oxide.Plugins
                             var terrainHeight = TerrainMeta.HeightMap.GetHeight(worldPosition);
                             if (worldPosition.y - terrainHeight < -1)
                             {
-                                trainEnginePrefab = ClassicWorkcartPrefab;
+                                trainEnginePrefab = TrainCarPrefab.ClassicWorkcartPrefab;
                             }
                         }
 
