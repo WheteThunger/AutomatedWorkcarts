@@ -1067,14 +1067,17 @@ namespace Oxide.Plugins
                 if (trainEngineData != null)
                 {
                     foundTrainEngineIds.Add(trainEngine.net.ID.Value);
+
+                    var trainEngine2 = trainEngine;
+                    var trainEngineData2 = trainEngineData;
                     timer.Once(UnityEngine.Random.Range(0, 1f), () =>
                     {
-                        if (trainEngine != null
-                            && !IsTrainOwned(trainEngine)
-                            && _trainManager.CanHaveMoreConductors(trainEngine)
-                            && !_trainManager.HasTrainController(trainEngine))
+                        if (trainEngine2 != null
+                            && !IsTrainOwned(trainEngine2)
+                            && _trainManager.CanHaveMoreConductors(trainEngine2)
+                            && !_trainManager.HasTrainController(trainEngine2))
                         {
-                            _trainManager.TryCreateTrainController(trainEngine, trainEngineData: trainEngineData);
+                            _trainManager.TryCreateTrainController(trainEngine2, trainEngineData: trainEngineData2);
                         }
                     });
                 }
