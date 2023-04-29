@@ -21,7 +21,7 @@ using static TrainTrackSpline;
 
 namespace Oxide.Plugins
 {
-    [Info("Automated Workcarts", "WhiteThunder", "0.33.0")]
+    [Info("Automated Workcarts", "WhiteThunder", "0.33.1")]
     [Description("Automates workcarts with NPC conductors.")]
     internal class AutomatedWorkcarts : CovalencePlugin
     {
@@ -1056,17 +1056,17 @@ namespace Oxide.Plugins
             yield return _triggerManager.CreateAll();
             TrackStart();
 
-            var foundTrainEngineIds = new HashSet<uint>();
+            var foundTrainEngineIds = new HashSet<ulong>();
             foreach (var entity in BaseNetworkable.serverEntities)
             {
                 var trainEngine = entity as TrainEngine;
                 if (trainEngine == null)
                     continue;
 
-                var trainEngineData = _pluginData.GetTrainEngineData(trainEngine.net.ID);
+                var trainEngineData = _pluginData.GetTrainEngineData(trainEngine.net.ID.Value);
                 if (trainEngineData != null)
                 {
-                    foundTrainEngineIds.Add(trainEngine.net.ID);
+                    foundTrainEngineIds.Add(trainEngine.net.ID.Value);
                     timer.Once(UnityEngine.Random.Range(0, 1f), () =>
                     {
                         if (trainEngine != null
@@ -3374,7 +3374,7 @@ namespace Oxide.Plugins
 
                 if (!SpawnedTrainCarTracker.ContainsTrainCar(primaryTrainEngine))
                 {
-                    _pluginData.AddTrainEngineId(primaryTrainEngine.net.ID, trainEngineData);
+                    _pluginData.AddTrainEngineId(primaryTrainEngine.net.ID.Value, trainEngineData);
                 }
 
                 var primaryForward = primaryTrainEngine.transform.forward;
@@ -4209,7 +4209,7 @@ namespace Oxide.Plugins
             public TrainEngine TrainEngine { get; private set; }
             public Transform Transform { get; private set; }
             public NPCShopKeeper Conductor { get; private set; }
-            public uint NetId { get; private set; }
+            public ulong NetId { get; private set; }
             public string NetIdString { get; private set; }
             private bool _isReverse;
 
@@ -4222,7 +4222,7 @@ namespace Oxide.Plugins
                 TrainController = trainController;
                 TrainEngine = trainEngine;
                 Transform = trainEngine.transform;
-                NetId = trainEngine.net.ID;
+                NetId = trainEngine.net.ID.Value;
                 NetIdString = NetId.ToString();
 
                 _isReverse = isReverse;
@@ -4408,10 +4408,10 @@ namespace Oxide.Plugins
             }
 
             [JsonProperty("AutomatedWorkcardIds", DefaultValueHandling = DefaultValueHandling.Ignore)]
-            public HashSet<uint> AutomatedWorkcartIds;
+            public HashSet<ulong> AutomatedWorkcartIds;
 
             [JsonProperty("AutomatedWorkcarts")]
-            public Dictionary<uint, TrainEngineData> AutomatedTrainEngines = new Dictionary<uint, TrainEngineData>();
+            public Dictionary<ulong, TrainEngineData> AutomatedTrainEngines = new Dictionary<ulong, TrainEngineData>();
 
             [JsonIgnore]
             private bool _isDirty;
@@ -4449,7 +4449,7 @@ namespace Oxide.Plugins
                 }
             }
 
-            public TrainEngineData GetTrainEngineData(uint trainCarId)
+            public TrainEngineData GetTrainEngineData(ulong trainCarId)
             {
                 TrainEngineData trainEngineData;
                 return AutomatedTrainEngines.TryGetValue(trainCarId, out trainEngineData)
@@ -4457,12 +4457,7 @@ namespace Oxide.Plugins
                     : null;
             }
 
-            public bool ContainsTrainEngineId(uint trainEngineId)
-            {
-                return AutomatedTrainEngines.ContainsKey(trainEngineId);
-            }
-
-            public void AddTrainEngineId(uint trainEngineId, TrainEngineData trainEngineData)
+            public void AddTrainEngineId(ulong trainEngineId, TrainEngineData trainEngineData)
             {
                 if (AutomatedTrainEngines.ContainsKey(trainEngineId))
                     return;
@@ -4471,7 +4466,7 @@ namespace Oxide.Plugins
                 _isDirty = true;
             }
 
-            public void RemoveTrainEngineId(uint trainEngineId)
+            public void RemoveTrainEngineId(ulong trainEngineId)
             {
                 if (AutomatedTrainEngines.Remove(trainEngineId))
                 {
@@ -4479,7 +4474,7 @@ namespace Oxide.Plugins
                 }
             }
 
-            public void TrimToTrainEngineIds(HashSet<uint> foundTrainEngineIds)
+            public void TrimToTrainEngineIds(HashSet<ulong> foundTrainEngineIds)
             {
                 foreach (var trainEngineId in AutomatedTrainEngines.Keys.ToArray())
                 {
