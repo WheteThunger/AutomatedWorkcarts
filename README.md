@@ -93,6 +93,8 @@ Workcarts can be spawned via spawn triggers. The following steps will walk you t
 5. To add wagons to the spawn point, aim at the trigger and run the command `awt.train Workcart WagonA WagonB WagonC Workcart`. This example command will add multiple wagons, with an additional workcart at the end. You can add as many wagons and workcarts as you want, in any order, as long as there is enough space for them on the tracks.
 6. If you want to add a conductor to the train, aim at the trigger and run `awt.update Conductor Fwd Hi` then `awt.respawn`.
 
+Note: If the train is destroyed, it will be respawned up to 30 seconds later. At most one train can be spawned by a given spawn point at a time. If you want multiple trains, you will need to create multiple spawn points.
+
 ## Permission
 
 - `automatedworkcarts.toggle` -- Allows usage of the `aw.toggle` and `aw.resetall` commands.
@@ -176,6 +178,7 @@ Update examples:
 - `awt.update Left` -- Updates the trigger's track selection to `Left`.
 - `awt.update Fwd Hi` -- Updates the trigger's direction to `Fwd`, and speed to `Hi`.
 - `awt.update @Route2` -- Updates the trigger's route to `Route2`.
+- `awt.update 60 Left Fwd Hi @Route2` -- Applies all of the above updates to the trigger at once.
 
 Spawn examples:
 
@@ -183,7 +186,11 @@ Spawn examples:
 - `awt.train Workcart WagonA WagonB` -- Updates the trigger to spawn a workcart with one `WagonA` and one `WagonB` wagon coupled behind it.
 - `awt.train Workcart WagonC WagonC` -- Updates the trigger to spawn a workcart with two `WagonC` wagons coupled behind it.
 - `awt.train Workcart Workcart` -- Updates the trigger to spawn two workcarts coupled together.
-- `awt.train Locomotive Workcart WagonA WagonB WagonC WagonFuel WagonLoot WagonResource Caboose WorkcartCovered` -- Updates the trigger to spawn a workcart with all possible train car types coupled behind it.
+- `awt.train Locomotive Workcart WagonA WagonB WagonC WagonFuel WagonLoot WagonResource Caboose WorkcartCovered` -- Updates the trigger to spawn a train with all possible train car types coupled behind it.
+
+All-in-one examples:
+
+- `awt.add Conductor Brake Zero 10 Fwd Hi Left Workcart WagonA WagonB` -- Creates a trigger that will spawn a workcart with one `WagonA` and one `WagonB` wagon coupled behind it. It will have a conductor, and will initially wait 10 seconds before driving forward at `Hi` speed. On return visits, it will brake to a stop and wait 10 seconds before continuing.
 
 ## Configuration
 
