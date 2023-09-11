@@ -1218,6 +1218,9 @@ namespace Oxide.Plugins
             if (trainCar.IsDestroyed)
                 return null;
 
+            // Don't let the train kill itself if there isn't quite enough space.
+            trainCar.CancelInvoke(trainCar.KillMessage);
+
             trainCar.Invoke(() => EnableSavingRecursive(trainCar, false), 0);
 
             return trainCar;
