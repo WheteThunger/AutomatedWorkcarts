@@ -1230,25 +1230,8 @@ namespace Oxide.Plugins
             return distanceOnSpline;
         }
 
-        private static TrainCar AddTrainCar(TrainCar frontTrainCar, TrainCarPrefab frontTrainCarPrefab, TrainCarPrefab trainCarPrefab, TrackSelection trackSelection, bool allowRearCoupling = true)
+        private static TrainCar AddTrainCar(TrainCar frontTrainCar, TrainCarPrefab frontTrainCarPrefab, TrainCarPrefab trainCarPrefab, TrackSelection trackSelection)
         {
-            var frontSpline = frontTrainCar.FrontTrackSection;
-            var position = frontTrainCar.transform.position;
-            var distanceOnSpline = GetSplineDistance(frontSpline, position);
-
-            var frontTrainCarForward = frontTrainCarPrefab.Reverse
-                ? -frontTrainCar.transform.forward
-                : frontTrainCar.transform.forward;
-
-            var askerIsForward = frontSpline.IsForward(frontTrainCarForward, distanceOnSpline);
-            var splineInfo = new SplineInfo
-            {
-                Spline = frontSpline,
-                Distance = distanceOnSpline,
-                Ascending = !askerIsForward,
-                IsForward = askerIsForward,
-            };
-
             var rearCouplingTransform = frontTrainCarPrefab.Reverse
                 ? frontTrainCar.frontCoupling
                 : frontTrainCar.rearCoupling;
@@ -1256,14 +1239,41 @@ namespace Oxide.Plugins
             if (rearCouplingTransform == null)
                 return null;
 
-            var finalDistance = Math.Abs(rearCouplingTransform.localPosition.z) + GetTrainCarFrontCouplingOffsetZ(trainCarPrefab.PrefabPath);
-            var spawnDistance = Mathf.Max(finalDistance, 22);
+            var rearWheelPos = frontTrainCarPrefab.Reverse
+                ? frontTrainCar.GetFrontWheelPos()
+                : frontTrainCar.GetRearWheelPos();
+
+            var wheelToRearCouplingDistance = Math.Abs(rearWheelPos.z - rearCouplingTransform.position.z);
+
+            var rearSpline = frontTrainCarPrefab.Reverse
+                ? frontTrainCar.FrontTrackSection
+                : frontTrainCar.RearTrackSection;
+
+            var rearWheelDistanceOnSpline = GetSplineDistance(rearSpline, rearWheelPos);
+
+            var frontTrainCarForward = frontTrainCarPrefab.Reverse
+                ? -frontTrainCar.transform.forward
+                : frontTrainCar.transform.forward;
+
+            var askerIsForward = rearSpline.IsForward(frontTrainCarForward, rearWheelDistanceOnSpline);
+            var splineInfo = new SplineInfo
+            {
+                Spline = rearSpline,
+                Distance = rearWheelDistanceOnSpline,
+                Ascending = !askerIsForward,
+                IsForward = askerIsForward,
+            };
+
+            // Spawn the train slightly farther away so it has space. It will be moved forward after spawn.
+            var spawnDistanceOffset = 2;
+
+            var finalDistance = wheelToRearCouplingDistance + GetTrainCarFrontCouplingOffsetZ(trainCarPrefab);
 
             SplineInfo finalSplineInfo;
             var finalPosition = GetPositionAlongTrack(splineInfo, finalDistance, trackSelection, out finalSplineInfo);
 
             SplineInfo spawnSplineInfo;
-            var resultPosition = GetPositionAlongTrack(finalSplineInfo, spawnDistance - finalDistance, trackSelection, out spawnSplineInfo);
+            var resultPosition = GetPositionAlongTrack(finalSplineInfo, spawnDistanceOffset, trackSelection, out spawnSplineInfo);
             var resultRotation = GetSplineTangentRotation(spawnSplineInfo.Spline, spawnSplineInfo.Distance, frontTrainCar.transform.rotation);
 
             if (trainCarPrefab.Reverse != frontTrainCarPrefab.Reverse)
@@ -1285,7 +1295,7 @@ namespace Oxide.Plugins
                 rearTrainCar.MoveFrontWheelsAlongTrackSpline(
                     rearTrainCar.FrontTrackSection,
                     rearTrainCar.FrontWheelSplineDist,
-                    spawnDistance - finalDistance,
+                    spawnDistanceOffset,
                     rearTrainCar.RearTrackSection != rearTrainCar.FrontTrackSection ? rearTrainCar.RearTrackSection : null,
                     trackSelection
                 );
@@ -1306,13 +1316,15 @@ namespace Oxide.Plugins
             return rearTrainCar;
         }
 
-        private static float GetTrainCarFrontCouplingOffsetZ(string prefabName)
+        private static float GetTrainCarFrontCouplingOffsetZ(TrainCarPrefab trainCarPrefab)
         {
-            var prefab = GameManager.server.FindPrefab(prefabName)?.GetComponent<TrainCar>();
+            var prefab = GameManager.server.FindPrefab(trainCarPrefab.PrefabPath)?.GetComponent<TrainCar>();
             if (prefab == null)
                 return 0;
 
-            return prefab.frontCoupling.localPosition.z;
+            return trainCarPrefab.Reverse
+                ? prefab.rearCoupling.localPosition.z
+                : prefab.frontCoupling.localPosition.z;
         }
 
         private static ConnectedTrackInfo GetAdjacentTrackInfo(TrainTrackSpline spline, TrainTrackSpline.TrackSelection selection, bool isAscending = true, bool askerIsForward = true)
