@@ -1330,7 +1330,7 @@ namespace Oxide.Plugins
                 : prefab.frontCoupling.localPosition.z;
         }
 
-        private static ConnectedTrackInfo GetAdjacentTrackInfo(TrainTrackSpline spline, TrainTrackSpline.TrackSelection selection, bool isAscending = true, bool askerIsForward = true)
+        private static ConnectedTrackInfo GetAdjacentTrackInfo(TrainTrackSpline spline, TrackSelection selection, bool isAscending = true, bool askerIsForward = true)
         {
             var trackOptions = isAscending
                 ? spline.nextTracks
@@ -1344,12 +1344,12 @@ namespace Oxide.Plugins
 
             switch (selection)
             {
-                case TrainTrackSpline.TrackSelection.Left:
+                case TrackSelection.Left:
                     return isAscending == askerIsForward
                         ? trackOptions.FirstOrDefault()
                         : trackOptions.LastOrDefault();
 
-                case TrainTrackSpline.TrackSelection.Right:
+                case TrackSelection.Right:
                     return isAscending == askerIsForward
                         ? trackOptions.LastOrDefault()
                         : trackOptions.FirstOrDefault();
@@ -1413,7 +1413,7 @@ namespace Oxide.Plugins
                     return resultSplineInfo.Spline.GetPosition(resultSplineInfo.Distance);
                 }
 
-                if (adjacentTrackInfo.orientation == TrainTrackSpline.TrackOrientation.Reverse)
+                if (adjacentTrackInfo.orientation == TrackOrientation.Reverse)
                 {
                     resultSplineInfo.Ascending = !resultSplineInfo.Ascending;
                     resultSplineInfo.IsForward = !resultSplineInfo.IsForward;
@@ -1428,13 +1428,6 @@ namespace Oxide.Plugins
 
         private static Vector3 GetPositionAlongTrack(SplineInfo splineInfo, float desiredDistance, TrackSelection trackSelection, out SplineInfo resultSplineInfo)
         {
-            float remainingDistance;
-            return GetPositionAlongTrack(splineInfo, desiredDistance, trackSelection, out resultSplineInfo, out remainingDistance);
-        }
-
-        private static Vector3 GetPositionAlongTrack(SplineInfo splineInfo, float desiredDistance, TrackSelection trackSelection)
-        {
-            SplineInfo resultSplineInfo;
             float remainingDistance;
             return GetPositionAlongTrack(splineInfo, desiredDistance, trackSelection, out resultSplineInfo, out remainingDistance);
         }
@@ -1459,7 +1452,7 @@ namespace Oxide.Plugins
 
         private static bool TryParseEngineSpeed(string speedName, out EngineSpeeds engineSpeed)
         {
-            if (Enum.TryParse<EngineSpeeds>(speedName, true, out engineSpeed))
+            if (Enum.TryParse(speedName, true, out engineSpeed))
                 return true;
 
             engineSpeed = EngineSpeeds.Zero;
@@ -1469,7 +1462,7 @@ namespace Oxide.Plugins
 
         private static bool TryParseTrackSelection(string selectionName, out TrackSelection trackSelection)
         {
-            if (Enum.TryParse<TrackSelection>(selectionName, true, out trackSelection))
+            if (Enum.TryParse(selectionName, true, out trackSelection))
                 return true;
 
             LogError($"Unrecognized track selection: {selectionName}");
@@ -1520,7 +1513,7 @@ namespace Oxide.Plugins
 
             TrainTrackSpline spline;
             float distanceResult;
-            if (!TrainTrackSpline.TryFindTrackNear(hitPosition, 5, out spline, out distanceResult))
+            if (!TryFindTrackNear(hitPosition, 5, out spline, out distanceResult))
             {
                 trackPosition = Vector3.zero;
                 return false;
@@ -1570,7 +1563,9 @@ namespace Oxide.Plugins
             foreach (var dungeonCell in TerrainMeta.Path.DungeonGridCells)
             {
                 if (DungeonCellWrapper.GetTunnelType(dungeonCell) == tunnelType)
+                {
                     dungeonCellList.Add(new DungeonCellWrapper(dungeonCell));
+                }
             }
 
             return dungeonCellList;
@@ -1585,7 +1580,7 @@ namespace Oxide.Plugins
         }
 
         private static TrainCar GetTrainCarWhereAiming(BasePlayer player) =>
-            GetLookEntity(player, Rust.Layers.Mask.Vehicle_Detailed) as TrainCar;
+            GetLookEntity(player, Layers.Mask.Vehicle_Detailed) as TrainCar;
 
         private static void DestroyTrainCarCinematically(TrainCar trainCar)
         {
@@ -1597,7 +1592,7 @@ namespace Oxide.Plugins
                 Effect.server.Run(BradleyExplosionEffectPrefab, trainCar.GetExplosionPos(), Vector3.up, sourceConnection: null, broadcast: true);
             }
 
-            var hitInfo = new HitInfo(null, trainCar, Rust.DamageType.Explosion, float.MaxValue, trainCar.transform.position);
+            var hitInfo = new HitInfo(null, trainCar, DamageType.Explosion, float.MaxValue, trainCar.transform.position);
             hitInfo.UseProtection = false;
             trainCar.Die(hitInfo);
         }
@@ -1800,10 +1795,10 @@ namespace Oxide.Plugins
                     : Quaternion.identity;
             }
 
-            public string ShortName { get; private set; }
-            public TunnelType TunnelType { get; private set; }
-            public Vector3 Position { get; private set; }
-            public Quaternion Rotation { get; private set; }
+            public string ShortName { get; }
+            public TunnelType TunnelType { get; }
+            public Vector3 Position { get; }
+            public Quaternion Rotation { get; }
 
             private OBB _boundingBox;
 
@@ -1816,7 +1811,9 @@ namespace Oxide.Plugins
 
                 Vector3 dimensions;
                 if (DungeonCellDimensions.TryGetValue(TunnelType, out dimensions))
+                {
                     _boundingBox = new OBB(Position + new Vector3(0, dimensions.y / 2, 0), dimensions, Rotation);
+                }
             }
 
             public Vector3 InverseTransformPoint(Vector3 worldPosition) =>
@@ -1893,11 +1890,6 @@ namespace Oxide.Plugins
 
             var sign = throttle >= 0 ? 1 : -1;
             return sign * (int)speedInstruction.Value;
-        }
-
-        private static EngineSpeeds ApplySpeed(EngineSpeeds throttle, SpeedInstruction? speedInstruction)
-        {
-            return EngineThrottleFromNumber(ApplySpeed(EngineThrottleToNumber(throttle), speedInstruction));
         }
 
         private static int ApplyDirection(int throttle, DirectionInstruction? directionInstruction)
@@ -2060,13 +2052,13 @@ namespace Oxide.Plugins
             public string TunnelType;
 
             [JsonProperty("AddConductor", DefaultValueHandling = DefaultValueHandling.Ignore)]
-            public bool AddConductor = false;
+            public bool AddConductor;
 
             [JsonProperty("Brake", DefaultValueHandling = DefaultValueHandling.Ignore)]
-            public bool Brake = false;
+            public bool Brake;
 
             [JsonProperty("Destroy", DefaultValueHandling = DefaultValueHandling.Ignore)]
-            public bool Destroy = false;
+            public bool Destroy;
 
             [JsonProperty("Direction", DefaultValueHandling = DefaultValueHandling.Ignore)]
             public string Direction;
@@ -2099,7 +2091,7 @@ namespace Oxide.Plugins
                 {
                     if (value && TrainCars == null)
                     {
-                        TrainCars = new string[] { TrainCarPrefab.WorkcartAlias };
+                        TrainCars = new[] { TrainCarPrefab.WorkcartAlias };
                     }
                 }
             }
@@ -2143,8 +2135,10 @@ namespace Oxide.Plugins
                 if (!string.IsNullOrWhiteSpace(TunnelType))
                 {
                     TunnelType tunnelType;
-                    if (Enum.TryParse<TunnelType>(TunnelType, out tunnelType))
+                    if (Enum.TryParse(TunnelType, out tunnelType))
+                    {
                         _tunnelType = tunnelType;
+                    }
                 }
 
                 return (TunnelType)_tunnelType;
@@ -2156,8 +2150,10 @@ namespace Oxide.Plugins
                 if (_speedInstruction == null && !string.IsNullOrWhiteSpace(Speed))
                 {
                     SpeedInstruction speed;
-                    if (Enum.TryParse<SpeedInstruction>(Speed, out speed))
+                    if (Enum.TryParse(Speed, out speed))
+                    {
                         _speedInstruction = speed;
+                    }
                 }
 
                 // Ensure there is a target speed when braking.
@@ -2173,8 +2169,10 @@ namespace Oxide.Plugins
                 if (_directionInstruction == null && !string.IsNullOrWhiteSpace(Direction))
                 {
                     DirectionInstruction direction;
-                    if (Enum.TryParse<DirectionInstruction>(Direction, out direction))
+                    if (Enum.TryParse(Direction, out direction))
+                    {
                         _directionInstruction = direction;
+                    }
                 }
 
                 return _directionInstruction;
@@ -2186,8 +2184,10 @@ namespace Oxide.Plugins
                 if (_trackSelectionInstruction == null && !string.IsNullOrWhiteSpace(TrackSelection))
                 {
                     TrackSelectionInstruction trackSelection;
-                    if (Enum.TryParse<TrackSelectionInstruction>(TrackSelection, out trackSelection))
+                    if (Enum.TryParse(TrackSelection, out trackSelection))
+                    {
                         _trackSelectionInstruction = trackSelection;
+                    }
                 }
 
                 return _trackSelectionInstruction;
@@ -2199,8 +2199,10 @@ namespace Oxide.Plugins
                 if (_departureSpeedInstruction == null && !string.IsNullOrWhiteSpace(Speed))
                 {
                     SpeedInstruction speed;
-                    if (Enum.TryParse<SpeedInstruction>(DepartureSpeed, out speed))
+                    if (Enum.TryParse(DepartureSpeed, out speed))
+                    {
                         _departureSpeedInstruction = speed;
+                    }
                 }
 
                 return _departureSpeedInstruction ?? SpeedInstruction.Med;
@@ -2382,7 +2384,7 @@ namespace Oxide.Plugins
 
             private GameObject _gameObject;
             private TrainTrigger _trainTrigger;
-            private List<TrainCar> _spawnedTrainCars;
+            private List<TrainCar> _spawnedTrains;
 
             protected BaseTriggerInstance(TrainManager trainManager, TriggerData triggerData)
             {
@@ -2474,9 +2476,9 @@ namespace Oxide.Plugins
                 SpawnTrain();
             }
 
-            public void HandleTrainCarKilled(TrainCar traincar)
+            public void HandleTrainCarKilled(TrainCar trainCar)
             {
-                _spawnedTrainCars.Remove(traincar);
+                _spawnedTrains.Remove(trainCar);
             }
 
             public void Destroy()
@@ -2487,7 +2489,7 @@ namespace Oxide.Plugins
 
             public bool DidSpawnTrain(TrainCar trainCar)
             {
-                return _spawnedTrainCars?.Contains(trainCar) ?? false;
+                return _spawnedTrains?.Contains(trainCar) ?? false;
             }
 
             private void Enable()
@@ -2519,9 +2521,9 @@ namespace Oxide.Plugins
 
             private void StartSpawningTrains()
             {
-                if (_spawnedTrainCars == null)
+                if (_spawnedTrains == null)
                 {
-                    _spawnedTrainCars = new List<TrainCar>(MaxSpawnedTrains);
+                    _spawnedTrains = new List<TrainCar>(MaxSpawnedTrains);
                 }
 
                 _trainTrigger.InvokeRepeating(SpawnTrainTracked, UnityEngine.Random.Range(0f, 1f), TimeBetweenSpawns);
@@ -2534,7 +2536,7 @@ namespace Oxide.Plugins
 
             private void SpawnTrain()
             {
-                if (_spawnedTrainCars.Count >= MaxSpawnedTrains)
+                if (_spawnedTrains.Count >= MaxSpawnedTrains)
                     return;
 
                 if (Spline == null)
@@ -2588,7 +2590,7 @@ namespace Oxide.Plugins
 
                     previousTrainCarPrefab = trainCarPrefab;
 
-                    _spawnedTrainCars.Add(previousTrainCar);
+                    _spawnedTrains.Add(previousTrainCar);
                     SpawnedTrainCarComponent.AddToEntity(previousTrainCar, this);
                 }
 
@@ -2614,18 +2616,18 @@ namespace Oxide.Plugins
 
             private void KillTrains()
             {
-                if (_spawnedTrainCars == null)
+                if (_spawnedTrains == null)
                     return;
 
-                for (var i = _spawnedTrainCars.Count - 1; i >= 0; i--)
+                for (var i = _spawnedTrains.Count - 1; i >= 0; i--)
                 {
-                    var trainCar = _spawnedTrainCars[i];
+                    var trainCar = _spawnedTrains[i];
                     if (trainCar != null && !trainCar.IsDestroyed)
                     {
                         trainCar.Kill();
                     }
 
-                    _spawnedTrainCars.RemoveAt(i);
+                    _spawnedTrains.RemoveAt(i);
                 }
             }
         }
@@ -2641,7 +2643,7 @@ namespace Oxide.Plugins
 
         private class TunnelTriggerInstance : BaseTriggerInstance
         {
-            public DungeonCellWrapper DungeonCellWrapper { get; private set; }
+            public DungeonCellWrapper DungeonCellWrapper { get; }
 
             public override Vector3 WorldPosition => DungeonCellWrapper.TransformPoint(TriggerData.Position);
             public override Quaternion WorldRotation => DungeonCellWrapper.Rotation * Quaternion.Euler(0, TriggerData.RotationAngle, 0);
@@ -2659,18 +2661,16 @@ namespace Oxide.Plugins
 
         private abstract class BaseTriggerController
         {
-            public TriggerData TriggerData { get; protected set; }
+            protected TriggerData TriggerData { get; }
             public BaseTriggerInstance[] TriggerInstanceList { get; protected set; }
 
             protected TrainManager _trainManager;
 
-            public BaseTriggerController(TrainManager trainManager, TriggerData triggerData)
+            protected BaseTriggerController(TrainManager trainManager, TriggerData triggerData)
             {
                 _trainManager = trainManager;
                 TriggerData = triggerData;
             }
-
-            public abstract void Create();
 
             public void OnMove()
             {
@@ -2742,30 +2742,30 @@ namespace Oxide.Plugins
             }
         }
 
-        private class MapTriggerController : BaseTriggerController
+        private sealed class MapTriggerController : BaseTriggerController
         {
             public MapTriggerController(TrainManager trainManager, TriggerData triggerData)
                 : base(trainManager, triggerData) {}
 
-            public override void Create()
+            public void Create()
             {
                 var triggerInstance = new MapTriggerInstance(_trainManager, TriggerData);
-                TriggerInstanceList = new MapTriggerInstance[] { triggerInstance };
+                TriggerInstanceList = new BaseTriggerInstance[] { triggerInstance };
 
                 if (TriggerData.Enabled)
                     triggerInstance.CreateTrigger();
             }
         }
 
-        private class TunnelTriggerController : BaseTriggerController
+        private sealed class TunnelTriggerController : BaseTriggerController
         {
             public TunnelTriggerController(TrainManager trainManager, TriggerData triggerData)
                 : base(trainManager, triggerData) {}
 
-            public override void Create()
+            public void Create()
             {
                 var matchingDungeonCells = FindAllTunnelsOfType(TriggerData.GetTunnelType());
-                TriggerInstanceList = new TunnelTriggerInstance[matchingDungeonCells.Count];
+                TriggerInstanceList = new BaseTriggerInstance[matchingDungeonCells.Count];
 
                 for (var i = 0; i < matchingDungeonCells.Count; i++)
                 {
@@ -3168,7 +3168,7 @@ namespace Oxide.Plugins
                 var infoLines = new List<string>();
 
                 if (!triggerData.Enabled)
-                    infoLines.Add(_pluginInstance.GetMessage(player, Lang.InfoTriggerrDisabled));
+                    infoLines.Add(_pluginInstance.GetMessage(player, Lang.InfoTriggerDisabled));
 
                 infoLines.Add(_pluginInstance.GetMessage(player, Lang.InfoTrigger, triggerPrefix, triggerData.Id));
 
@@ -3645,22 +3645,16 @@ namespace Oxide.Plugins
 
         private class TrainController
         {
-            public TrainManager TrainManager { get; private set; }
+            public TrainManager TrainManager { get; }
             public TrainEngineController PrimaryTrainEngineController { get; private set; }
             public bool IsDestroying { get; private set; }
-            public bool CountsTowardConductorLimit { get; private set; }
+            public bool CountsTowardConductorLimit { get; }
             public TrainEngine PrimaryTrainEngine => PrimaryTrainEngineController.TrainEngine;
             public Configuration PluginConfig => TrainManager.PluginConfig;
 
-            public Vector3 Forward
-            {
-                get
-                {
-                    return EngineThrottleToNumber(DepartureThrottle) >= 0
-                        ? PrimaryTrainEngine.transform.forward
-                        : -PrimaryTrainEngine.transform.forward;
-                }
-            }
+            public Vector3 Forward => EngineThrottleToNumber(DepartureThrottle) >= 0
+                ? PrimaryTrainEngine.transform.forward
+                : -PrimaryTrainEngine.transform.forward;
 
             private bool IsStopped => _trainState is StoppedState;
             private bool IsStopping => (_trainState as BrakingState)?.IsStopping ?? false;
@@ -3791,11 +3785,11 @@ namespace Oxide.Plugins
                 {
                     PrimaryTrainEngineController.Invoke(() =>
                     {
-                        foreach (var trainCarCompnent in _trainCarComponents.ToArray())
+                        foreach (var trainCarComponent in _trainCarComponents.ToArray())
                         {
-                            if (trainCarCompnent.TrainCar != null && !trainCarCompnent.TrainCar.IsDestroyed)
+                            if (trainCarComponent.TrainCar != null && !trainCarComponent.TrainCar.IsDestroyed)
                             {
-                                trainCarCompnent.TrainCar.Kill(BaseNetworkable.DestroyMode.Gib);
+                                trainCarComponent.TrainCar.Kill(BaseNetworkable.DestroyMode.Gib);
                             }
                         }
                     }, 0);
@@ -3965,7 +3959,7 @@ namespace Oxide.Plugins
             private void MaybeToggleHorn()
             {
                 _pluginInstance.TrackStart();
-                PrimaryTrainEngine.SetFlag(TrainEngine.Flag_Horn, ShouldPlayHorn());
+                PrimaryTrainEngine.SetFlag(Flag_Horn, ShouldPlayHorn());
                 _pluginInstance.TrackEnd();
             }
 
@@ -4033,17 +4027,17 @@ namespace Oxide.Plugins
 
             private void EnableInvincibility()
             {
-                foreach (var trainCarCompnent in _trainCarComponents)
+                foreach (var trainCarComponent in _trainCarComponents)
                 {
-                    AutomatedWorkcarts.EnableInvincibility(trainCarCompnent.TrainCar);
+                    AutomatedWorkcarts.EnableInvincibility(trainCarComponent.TrainCar);
                 }
             }
 
             private void DisableInvincibility()
             {
-                foreach (var trainCarCompnent in _trainCarComponents)
+                foreach (var trainCarComponent in _trainCarComponents)
                 {
-                    AutomatedWorkcarts.DisableInvincibility(trainCarCompnent.TrainCar);
+                    AutomatedWorkcarts.DisableInvincibility(trainCarComponent.TrainCar);
                 }
             }
 
@@ -4059,9 +4053,9 @@ namespace Oxide.Plugins
 
             private void DestroyCinematically()
             {
-                foreach (var trainCarCompnent in _trainCarComponents.ToArray())
+                foreach (var trainCarComponent in _trainCarComponents.ToArray())
                 {
-                    DestroyTrainCarCinematically(trainCarCompnent.TrainCar);
+                    DestroyTrainCarCinematically(trainCarComponent.TrainCar);
                 }
             }
         }
@@ -4285,6 +4279,7 @@ namespace Oxide.Plugins
                     if (mountPoint.isDriver)
                         return mountPoint.mountable;
                 }
+
                 return null;
             }
 
@@ -4324,7 +4319,7 @@ namespace Oxide.Plugins
 
                 // Simple and performant way to prevent NPCs and turrets from targeting the conductor.
                 Conductor.DisablePlayerCollider();
-                BaseEntity.Query.Server.RemovePlayer(Conductor);
+                Query.Server.RemovePlayer(Conductor);
                 Conductor.transform.localScale = Vector3.zero;
 
                 AddOutfit();
@@ -4333,7 +4328,7 @@ namespace Oxide.Plugins
 
             private void DisableHazardChecks()
             {
-                TrainEngine.SetFlag(TrainEngine.Flag_HazardAhead, false);
+                TrainEngine.SetFlag(Flag_HazardAhead, false);
                 TrainEngine.CancelInvoke(TrainEngine.CheckForHazards);
             }
 
@@ -4440,7 +4435,7 @@ namespace Oxide.Plugins
             {
                 var data = Interface.Oxide.DataFileSystem.ReadObject<StoredPluginData>(Filename) ?? new StoredPluginData();
 
-                // Migrate from the legacy `AutomatedWorkcardIds` to `AutomatedWorkcarts` which supports data.
+                // Migrate from the legacy `AutomatedWorkcartIds` to `AutomatedWorkcarts` which supports data.
                 if (data.AutomatedWorkcartIds != null)
                 {
                     foreach (var trainEngineId in data.AutomatedWorkcartIds)
@@ -4456,7 +4451,7 @@ namespace Oxide.Plugins
 
             public void Save()
             {
-                Interface.Oxide.DataFileSystem.WriteObject<StoredPluginData>(Filename, this);
+                Interface.Oxide.DataFileSystem.WriteObject(Filename, this);
             }
 
             public void SaveIfDirty()
@@ -4644,7 +4639,7 @@ namespace Oxide.Plugins
 
             public static StoredTunnelData GetDefaultData()
             {
-                return new StoredTunnelData()
+                return new StoredTunnelData
                 {
                     TunnelTriggers =
                     {
@@ -4774,7 +4769,7 @@ namespace Oxide.Plugins
             [JsonProperty("Skin")]
             public ulong SkinId;
 
-            private bool _isValidated = false;
+            private bool _isValidated;
             private ItemDefinition _itemDefinition;
             public ItemDefinition GetItemDefinition()
             {
@@ -4811,7 +4806,9 @@ namespace Oxide.Plugins
             public Color GetColor()
             {
                 if (_color == null)
+                {
                     _color = ParseColor(Color, UnityEngine.Color.black);
+                }
 
                 return (Color)_color;
             }
@@ -4877,7 +4874,7 @@ namespace Oxide.Plugins
             public int MaxConductors = -1;
 
             [JsonProperty("ConductorOutfit")]
-            public ItemInfo[] ConductorOutfit = new ItemInfo[]
+            public ItemInfo[] ConductorOutfit = new[]
             {
                 new ItemInfo { ShortName = "jumpsuit.suit" },
                 new ItemInfo { ShortName = "sunglasses03chrome" },
@@ -4899,9 +4896,7 @@ namespace Oxide.Plugins
             public bool IsTunnelTypeEnabled(TunnelType tunnelType)
             {
                 bool enabled;
-                return EnableTunnelTriggers.TryGetValue(tunnelType.ToString(), out enabled)
-                    ? enabled
-                    : false;
+                return EnableTunnelTriggers.TryGetValue(tunnelType.ToString(), out enabled) && enabled;
             }
 
             private EngineSpeeds? _defaultSpeed;
@@ -4941,7 +4936,7 @@ namespace Oxide.Plugins
 
         #endregion
 
-        #region Configuration Boilerplate
+        #region Configuration Helpers
 
         private class SerializableConfiguration
         {
@@ -5095,7 +5090,7 @@ namespace Oxide.Plugins
              ? GetMessage(player, Lang.InfoConductorCountLimited, _trainManager.CountedConductors, _pluginConfig.MaxConductors)
              : GetMessage(player, Lang.InfoConductorCountUnlimited, _trainManager.CountedConductors);
 
-        private class Lang
+        private static class Lang
         {
             public const string ErrorNoPermission = "Error.NoPermission";
             public const string ErrorNoTriggers = "Error.NoTriggers";
@@ -5147,7 +5142,7 @@ namespace Oxide.Plugins
             public const string InfoTriggerMapPrefix = "Info.Trigger.Prefix.Map";
             public const string InfoTriggerTunnelPrefix = "Info.Trigger.Prefix.Tunnel";
 
-            public const string InfoTriggerrDisabled = "Info.Trigger.Disabled";
+            public const string InfoTriggerDisabled = "Info.Trigger.Disabled";
             public const string InfoTriggerMap = "Info.Trigger.Map";
             public const string InfoTriggerRoute = "Info.Trigger.Route";
             public const string InfoTriggerTunnel = "Info.Trigger.Tunnel";
@@ -5219,7 +5214,7 @@ namespace Oxide.Plugins
                 [Lang.InfoTriggerMapPrefix] = "M",
                 [Lang.InfoTriggerTunnelPrefix] = "T",
 
-                [Lang.InfoTriggerrDisabled] = "DISABLED",
+                [Lang.InfoTriggerDisabled] = "DISABLED",
                 [Lang.InfoTriggerMap] = "Map-specific",
                 [Lang.InfoTriggerRoute] = "Route: @{0}",
                 [Lang.InfoTriggerTunnel] = "Tunnel type: {0} (x{1})",
@@ -5290,7 +5285,7 @@ namespace Oxide.Plugins
                 [Lang.InfoTriggerMapPrefix] = "M",
                 [Lang.InfoTriggerTunnelPrefix] = "T",
 
-                [Lang.InfoTriggerrDisabled] = "DESATIVADO",
+                [Lang.InfoTriggerDisabled] = "DESATIVADO",
                 [Lang.InfoTriggerMap] = "Específico do mapa",
                 [Lang.InfoTriggerRoute] = "Rota: @{0}",
                 [Lang.InfoTriggerTunnel] = "Tipo de túnel: {0} (x{1})",
