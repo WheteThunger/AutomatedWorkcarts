@@ -12,6 +12,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Text.RegularExpressions;
 using UnityEngine;
 using static BaseEntity;
@@ -3188,16 +3189,31 @@ namespace Oxide.Plugins
                 {
                     if (triggerData.IsSpawner)
                     {
-                        var trainCarList = new List<string>();
+                        var sb = new StringBuilder();
+                        if (triggerData.TrainCars.Length > 10)
+                        {
+                            sb.AppendLine();
+                        }
+
                         for (var i = 0; i < triggerData.TrainCars.Length; i++)
                         {
                             var trainCarPrefab = TrainCarPrefab.FindPrefab(triggerData.TrainCars[i]);
                             if (trainCarPrefab != null)
                             {
-                                trainCarList.Add(trainCarPrefab.TrainCarAlias);
+                                // Show at most 10 train cars per line.
+                                if (i > 0 && i % 10 == 0)
+                                {
+                                    sb.AppendLine();
+                                }
+                                else
+                                {
+                                    sb.Append(" ");
+                                    sb.Append(trainCarPrefab.TrainCarAlias);
+                                }
                             }
                         }
-                        infoLines.Add(_pluginInstance.GetMessage(player, Lang.InfoTriggerSpawner, string.Join(" ", trainCarList)));
+
+                        infoLines.Add(_pluginInstance.GetMessage(player, Lang.InfoTriggerSpawner, sb.ToString()));
 
                         var spawnRotation = trigger.SpawnRotation;
                         var arrowBack = spherePosition + Vector3.up + spawnRotation * Vector3.back * 1.5f;
