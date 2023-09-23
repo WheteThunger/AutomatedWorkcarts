@@ -33,7 +33,7 @@ Automating a train will add a conductor NPC to every workcart attached to that t
 
 ### How triggers work
 
-Each trigger can have multiple properties, including direction (e.g., `Fwd`, `Rev`, `Invert`), speed (e.g, `Hi`, `Med`, `Lo`, `Zero`), track selection (e.g., `Default`, `Left`, `Right`), stop duration (in seconds), and departure speed/direction. When a conductor-driven train touches a trigger, its instructions may change according to the trigger properties. For example, if a train is currently following the instructions `Fwd` + `Hi` + `Left`, and then touches a trigger that specifies only track selection `Right`, the train instructions will change to `Fwd` + `Hi` + `Right`, causing the train to turn right at every intersection it comes to, until it touches a trigger that instructs otherwise.
+Each trigger can have multiple properties, including direction (e.g., `Fwd`, `Rev`, `Invert`), speed (e.g, `Hi`, `Med`, `Lo`, `Zero`), track selection (e.g., `Default`, `Left`, `Right`), stop duration (in seconds), and departure speed/direction. When a conductor-driven train touches a trigger, its instructions may change according to the trigger properties. For example, if a train is currently following the instructions `Fwd`, `Hi`, `Left`, and then touches a trigger that specifies only track selection `Right`, the train instructions will change to `Fwd`, `Hi`, `Right`, causing the train to turn right at every intersection it comes to, until it touches a trigger that instructs otherwise.
 
 ### Types of triggers
 
@@ -126,11 +126,12 @@ Note: If the train is destroyed, it will be respawned up to 30 seconds later. At
       - Note: Player-owned trains cannot receive conductors. Vanilla trains don't have owners, but most plugins that spawn vehicles for players will assign ownership by setting the `OwnerID` property of the vehicle.
     - `Brake` -- Instructs the train to brake until it reaches the designated speed. For example, if the train is going `Fwd_Hi` and enters a `Brake Med` trigger, it will temporarily go `Rev_Lo` until it slows down enough, then it will go `Fwd_Med`.
     - `Destroy` -- Destroys the train. This is intended primarily for testing and demonstrations, but it's also useful if you don't want to be bothered to make a more thoughtful track design.
-    - `@<route_name>` -- Instructs the trigger to ignore this trigger if it's not assigned this route (replace `<route_name>` with the name you want).
+    - `@<route_name>` -- Instructs the train to ignore this trigger if it's not assigned this route (replace `<route_name>` with the name you want).
       - If the trigger has the `Conductor` property and the train does not already have a conductor, it will be assigned this route.
     - `Enabled` -- Enables the trigger.
     - `Disabled` -- Disables the trigger. Disabled triggers are ignored by trains and are colored gray.
 - `aw.addtrunneltrigger <option1> <option2>` (alias: `awt.addt`) -- Adds a trigger to the track position where you are aiming.
+  - Options are the same as for `aw.addtrigger`.
   - Must be in a supported train tunnel (one enabled in plugin configuration).
   - This trigger will be replicated at all train tunnels of the same type. Editing or removing one of those triggers will affect them all.
 - `aw.updatetrigger <id> <option1> <option2> ...` (alias: `awt.update`) -- Adds or updates properties of the specified trigger, without removing any properties.
@@ -158,7 +159,7 @@ Simple examples:
 - `awt.add Fwd Lo` -- Causes the train to move **forward** at `Lo` speed, regardless of its current direction. Example: `Rev_Hi` -> `Fwd_Lo`.
 - `awt.add Invert` -- Causes the train to **reverse direction** at its **current speed**. Example: `Fwd_Med` -> `Rev_Med`.
 - `awt.add Invert Med` -- Causes the train to **reverse direction** at `Med` speed. Example: `Fwd_Hi` -> `Rev_Med`.
-- `awt.add Brake Med` -- Causes the train to **brake** until it reaches the `Med` speed. Examle: `Fwd_Hi` -> `Rev_Lo` -> `Fwd_Med`.
+- `awt.add Brake Med` -- Causes the train to **brake** until it reaches `Med` speed. Example: `Fwd_Hi` -> `Rev_Lo` -> `Fwd_Med`.
 - `awt.add Left` -- Causes the train to turn **left** at all future intersections.
 
 Advanced examples:
