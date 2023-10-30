@@ -1704,11 +1704,12 @@ namespace Oxide.Plugins
             BarricadeTunnel,
             LootTunnel,
             Intersection,
+            VerticalIntersection,
             LargeIntersection,
             Unsupported
         }
 
-        private static readonly Dictionary<string, Quaternion> DungeonRotations = new Dictionary<string, Quaternion>()
+        private static readonly Dictionary<string, Quaternion> DungeonRotations = new Dictionary<string, Quaternion>
         {
             ["station-sn-0"] = Quaternion.Euler(0, 180, 0),
             ["station-sn-1"] = Quaternion.identity,
@@ -1734,10 +1735,20 @@ namespace Oxide.Plugins
             ["intersection-s"] = Quaternion.Euler(0, 180, 0),
             ["intersection-w"] = Quaternion.Euler(0, -90, 0),
 
+            ["intersection-b5-n"] = Quaternion.identity,
+            ["intersection-b5-e"] = Quaternion.Euler(0, 90, 0),
+            ["intersection-b5-s"] = Quaternion.Euler(0, 180, 0),
+            ["intersection-b5-w"] = Quaternion.Euler(0, 270, 0),
+
             ["intersection"] = Quaternion.identity,
+
+            ["intersection-b6-n"] = Quaternion.identity,
+            ["intersection-b6-e"] = Quaternion.Euler(0, 90, 0),
+            ["intersection-b6-s"] = Quaternion.Euler(0, 180, 0),
+            ["intersection-b6-w"] = Quaternion.Euler(0, 270, 0),
         };
 
-        private static readonly Dictionary<string, TunnelType> DungeonCellTypes = new Dictionary<string, TunnelType>()
+        private static readonly Dictionary<string, TunnelType> DungeonCellTypes = new Dictionary<string, TunnelType>
         {
             ["station-sn-0"] = TunnelType.TrainStation,
             ["station-sn-1"] = TunnelType.TrainStation,
@@ -1763,7 +1774,17 @@ namespace Oxide.Plugins
             ["intersection-s"] = TunnelType.Intersection,
             ["intersection-w"] = TunnelType.Intersection,
 
+            ["intersection-b5-n"] = TunnelType.VerticalIntersection,
+            ["intersection-b5-e"] = TunnelType.VerticalIntersection,
+            ["intersection-b5-s"] = TunnelType.VerticalIntersection,
+            ["intersection-b5-w"] = TunnelType.VerticalIntersection,
+
             ["intersection"] = TunnelType.LargeIntersection,
+
+            ["intersection-b6-n"] = TunnelType.VerticalIntersection,
+            ["intersection-b6-e"] = TunnelType.VerticalIntersection,
+            ["intersection-b6-s"] = TunnelType.VerticalIntersection,
+            ["intersection-b6-w"] = TunnelType.VerticalIntersection,
         };
 
         private static readonly Dictionary<TunnelType, Vector3> DungeonCellDimensions = new Dictionary<TunnelType, Vector3>()
@@ -1773,6 +1794,7 @@ namespace Oxide.Plugins
             [TunnelType.LootTunnel] = new Vector3(16.5f, 8.5f, 216),
             [TunnelType.Intersection] = new Vector3(216, 8.5f, 216),
             [TunnelType.LargeIntersection] = new Vector3(216, 8.5f, 216),
+            [TunnelType.VerticalIntersection] = new Vector3(216, 8.5f, 216),
         };
 
         private class DungeonCellWrapper
@@ -4767,7 +4789,22 @@ namespace Oxide.Plugins
                             Speed = SpeedInstruction.Zero.ToString(),
                             StopDuration = DefaultQuickStopDuration,
                             DepartureSpeed = SpeedInstruction.Hi.ToString(),
-                        }
+                        },
+
+                        new TriggerData
+                        {
+                            Id = 12,
+                            Position = new Vector3(-85, DefaultTriggerHeight, 3.0f),
+                            TunnelType = TunnelType.VerticalIntersection.ToString(),
+                            TrackSelection = TrackSelectionInstruction.Default.ToString(),
+                        },
+                        new TriggerData
+                        {
+                            Id = 13,
+                            Position = new Vector3(0, DefaultTriggerHeight, 3.0f),
+                            TunnelType = TunnelType.VerticalIntersection.ToString(),
+                            TrackSelection = TrackSelectionInstruction.Left.ToString(),
+                        },
                     }
                 };
             }
@@ -4884,6 +4921,7 @@ namespace Oxide.Plugins
                 [TunnelType.LootTunnel.ToString()] = false,
                 [TunnelType.Intersection.ToString()] = false,
                 [TunnelType.LargeIntersection.ToString()] = false,
+                [TunnelType.VerticalIntersection.ToString()] = false,
             };
 
             [JsonProperty("MaxConductors")]

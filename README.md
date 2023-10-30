@@ -63,7 +63,8 @@ In the future, when Facepunch adds procedurally generated rail connections to mo
 The plugin provides default triggers which you can enable for underground tunnels. This setup should take only a few minutes.
 
 1. Set `EnableTunnelTriggers` -> `TrainStation` to `true` in the plugin configuration.
-2. Reload the plugin.
+2. Set `EnableTunnelTriggers` -> `VerticalIntersection` to `true` in the plugin configuration.
+3. Reload the plugin.
 
 This will place `Conductor` triggers on the vanilla workcart spawn points in the train station maintenance tunnels, which will automatically add conductors to the workcarts when they spawn. The workcarts will drive forward at max speed and turn left at all intersections. This will also place `Brake` triggers at the train stations, which will cause trains to automatically stop briefly near the elevators.
 
