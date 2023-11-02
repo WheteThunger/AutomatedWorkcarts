@@ -40,7 +40,6 @@ namespace Oxide.Plugins
         private const string GenericMapMarkerPrefab = "assets/prefabs/tools/map/genericradiusmarker.prefab";
         private const string VendingMapMarkerPrefab = "assets/prefabs/deployable/vendingmachine/vending_mapmarker.prefab";
         private const string BradleyExplosionEffectPrefab = "assets/prefabs/npc/m2bradley/effects/bradley_explosion.prefab";
-        private const string IdPlaceholder = "$id";
 
         private static readonly FieldInfo TrainCouplingIsValidField = typeof(TrainCoupling).GetField("isValid", BindingFlags.NonPublic | BindingFlags.Instance)
             ?? typeof(TrainCoupling).GetField("isValid", BindingFlags.Public | BindingFlags.Instance);
@@ -101,7 +100,6 @@ namespace Oxide.Plugins
                 Subscribe(nameof(OnEntitySpawned));
             }
 
-            _tunnelData.MigrateTriggers();
             _mapData = StoredMapData.Load();
             _triggerManager.SetMapData(_mapData);
 
@@ -279,11 +277,8 @@ namespace Oxide.Plugins
             }
 
             Vector3 trackPosition;
-            if (!TryGetTrackPosition(player.Object as BasePlayer, out trackPosition))
-            {
-                ReplyToPlayer(player, Lang.ErrorNoTrackFound);
+            if (!VerifyAimingAtTrackPosition(player, out trackPosition))
                 return;
-            }
 
             var triggerData = new TriggerData() { Position = trackPosition };
             AddTriggerShared(player, cmd, args, triggerData);
@@ -297,11 +292,8 @@ namespace Oxide.Plugins
                 return;
 
             Vector3 trackPosition;
-            if (!TryGetTrackPosition(player.Object as BasePlayer, out trackPosition))
-            {
-                ReplyToPlayer(player, Lang.ErrorNoTrackFound);
+            if (!VerifyAimingAtTrackPosition(player, out trackPosition))
                 return;
-            }
 
             DungeonCellWrapper dungeonCellWrapper;
             if (!VerifySupportedNearbyTrainTunnel(player, trackPosition, out dungeonCellWrapper))
@@ -467,7 +459,7 @@ namespace Oxide.Plugins
                 return;
 
             Vector3 trackPosition;
-            if (!VerifyTrackPosition(player, out trackPosition))
+            if (!VerifyAimingAtTrackPosition(player, out trackPosition))
                 return;
 
             if (triggerData.TriggerType == TrainTriggerType.Tunnel)
@@ -784,7 +776,7 @@ namespace Oxide.Plugins
             return false;
         }
 
-        private bool VerifyTrackPosition(IPlayer player, out Vector3 trackPosition)
+        private bool VerifyAimingAtTrackPosition(IPlayer player, out Vector3 trackPosition)
         {
             if (TryGetTrackPosition(player.Object as BasePlayer, out trackPosition))
                 return true;
@@ -1051,6 +1043,18 @@ namespace Oxide.Plugins
         #endregion
 
         #region Helper Methods
+
+        private static int GetNextTriggerId(List<TriggerData> triggerList)
+        {
+            var highestTriggerId = 0;
+
+            foreach (var triggerData in triggerList)
+            {
+                highestTriggerId = Math.Max(highestTriggerId, triggerData.Id);
+            }
+
+            return highestTriggerId + 1;
+        }
 
         private IEnumerator DoStartupRoutine()
         {
@@ -2837,16 +2841,6 @@ namespace Oxide.Plugins
                 _mapData = mapData;
             }
 
-            private int GetHighestTriggerId(IEnumerable<TriggerData> triggerList)
-            {
-                var highestTriggerId = 0;
-
-                foreach (var triggerData in triggerList)
-                    highestTriggerId = Math.Max(highestTriggerId, triggerData.Id);
-
-                return highestTriggerId;
-            }
-
             private void RegisterTriggerWithSpline(BaseTriggerInstance triggerInstance, TrainTrackSpline spline)
             {
                 List<BaseTriggerInstance> triggerInstanceList;
@@ -2914,7 +2908,7 @@ namespace Oxide.Plugins
                 if (triggerData.TriggerType == TrainTriggerType.Tunnel)
                 {
                     if (triggerData.Id == 0)
-                        triggerData.Id = GetHighestTriggerId(_tunnelData.TunnelTriggers) + 1;
+                        triggerData.Id = GetNextTriggerId(_tunnelData.TunnelTriggers);
 
                     CreateTunnelTriggerController(triggerData);
                     _tunnelData.AddTrigger(triggerData);
@@ -2922,7 +2916,7 @@ namespace Oxide.Plugins
                 else
                 {
                     if (triggerData.Id == 0)
-                        triggerData.Id = GetHighestTriggerId(_mapData.MapTriggers) + 1;
+                        triggerData.Id = GetNextTriggerId(_mapData.MapTriggers);
 
                     CreateMapTriggerController(triggerData);
                     _mapData.AddTrigger(triggerData);
@@ -4613,18 +4607,89 @@ namespace Oxide.Plugins
             private const float DefaultQuickStopDuration = 5;
             private const float DefaultTriggerHeight = 0.29f;
 
-            [JsonProperty("TunnelTriggers")]
-            public List<TriggerData> TunnelTriggers = new List<TriggerData>();
-
             public static string Filename => $"{_pluginInstance.Name}/TunnelTriggers";
 
             public static StoredTunnelData Load()
             {
-                if (Interface.Oxide.DataFileSystem.ExistsDatafile(Filename))
-                    return Interface.Oxide.DataFileSystem.ReadObject<StoredTunnelData>(Filename) ?? GetDefaultData();
+                var dataExists = Interface.Oxide.DataFileSystem.ExistsDatafile(Filename);
+                var data = dataExists
+                    ? Interface.Oxide.DataFileSystem.ReadObject<StoredTunnelData>(Filename) ?? GetDefaultData()
+                    : GetDefaultData();
 
-                return GetDefaultData();
+                if (MigrateToLatest(data) && dataExists)
+                {
+                    data.Save();
+                }
+
+                return data;
             }
+
+            private static bool MigrateToLatest(StoredTunnelData data)
+            {
+                return MigrateTriggersToMaintenanceTunnels(data)
+                     | MigrateV0ToV1(data);
+            }
+
+            private static bool MigrateTriggersToMaintenanceTunnels(StoredTunnelData data)
+            {
+                var changed = false;
+
+                foreach (var triggerData in data.TunnelTriggers)
+                {
+                    var tunnelType = triggerData.GetTunnelType();
+                    if (tunnelType == TunnelType.TrainStation)
+                    {
+                        if (triggerData.Position == new Vector3(0, DefaultTriggerHeight, -84))
+                        {
+                            triggerData.Position = new Vector3(45, DefaultTriggerHeight, 18);
+                            changed = true;
+                            continue;
+                        }
+
+                        if (triggerData.Position == new Vector3(0, DefaultTriggerHeight, 84))
+                        {
+                            triggerData.Position = new Vector3(-45, DefaultTriggerHeight, -18);
+                            changed = true;
+                            continue;
+                        }
+                    }
+                }
+
+                return changed;
+            }
+
+            private static bool MigrateV0ToV1(StoredTunnelData data)
+            {
+                if (data.DataFileVersion != 0)
+                    return false;
+
+                data.DataFileVersion++;
+
+                // Add VerticalIntersection triggers.
+                data.TunnelTriggers.Add(new TriggerData
+                {
+                    Id = GetNextTriggerId(data.TunnelTriggers),
+                    Position = new Vector3(-85, DefaultTriggerHeight, 3.0f),
+                    TunnelType = TunnelType.VerticalIntersection.ToString(),
+                    TrackSelection = TrackSelectionInstruction.Default.ToString(),
+                });
+
+                data.TunnelTriggers.Add(new TriggerData
+                {
+                    Id = GetNextTriggerId(data.TunnelTriggers),
+                    Position = new Vector3(0, DefaultTriggerHeight, 3.0f),
+                    TunnelType = TunnelType.VerticalIntersection.ToString(),
+                    TrackSelection = TrackSelectionInstruction.Left.ToString(),
+                });
+
+                return true;
+            }
+
+            [JsonProperty("DataFileVersion", DefaultValueHandling = DefaultValueHandling.Ignore)]
+            public float DataFileVersion;
+
+            [JsonProperty("TunnelTriggers")]
+            public List<TriggerData> TunnelTriggers = new List<TriggerData>();
 
             public StoredTunnelData Save()
             {
@@ -4642,37 +4707,6 @@ namespace Oxide.Plugins
             {
                 TunnelTriggers.Remove(triggerData);
                 Save();
-            }
-
-            public void MigrateTriggers()
-            {
-                var migratedTriggers = 0;
-
-                foreach (var triggerData in TunnelTriggers)
-                {
-                    var tunnelType = triggerData.GetTunnelType();
-                    if (tunnelType == TunnelType.TrainStation)
-                    {
-                        if (triggerData.Position == new Vector3(0, DefaultTriggerHeight, -84))
-                        {
-                            triggerData.Position = new Vector3(45, DefaultTriggerHeight, 18);
-                            migratedTriggers++;
-                            continue;
-                        }
-                        if (triggerData.Position == new Vector3(0, DefaultTriggerHeight, 84))
-                        {
-                            triggerData.Position = new Vector3(-45, DefaultTriggerHeight, -18);
-                            migratedTriggers++;
-                            continue;
-                        }
-                    }
-                }
-
-                if (migratedTriggers > 0)
-                {
-                    LogWarning($"Automatically relocated {migratedTriggers} tunnel triggers to bypass tunnels.");
-                    Save();
-                }
             }
 
             public static StoredTunnelData GetDefaultData()
@@ -4789,21 +4823,6 @@ namespace Oxide.Plugins
                             Speed = SpeedInstruction.Zero.ToString(),
                             StopDuration = DefaultQuickStopDuration,
                             DepartureSpeed = SpeedInstruction.Hi.ToString(),
-                        },
-
-                        new TriggerData
-                        {
-                            Id = 12,
-                            Position = new Vector3(-85, DefaultTriggerHeight, 3.0f),
-                            TunnelType = TunnelType.VerticalIntersection.ToString(),
-                            TrackSelection = TrackSelectionInstruction.Default.ToString(),
-                        },
-                        new TriggerData
-                        {
-                            Id = 13,
-                            Position = new Vector3(0, DefaultTriggerHeight, 3.0f),
-                            TunnelType = TunnelType.VerticalIntersection.ToString(),
-                            TrackSelection = TrackSelectionInstruction.Left.ToString(),
                         },
                     }
                 };

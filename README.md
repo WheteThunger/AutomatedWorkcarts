@@ -212,6 +212,7 @@ Default configuration:
     "LootTunnel": false,
     "Intersection": false,
     "LargeIntersection": false,
+    "VerticalIntersection": false
   },
   "MaxConductors": -1,
   "ConductorOutfit": [
