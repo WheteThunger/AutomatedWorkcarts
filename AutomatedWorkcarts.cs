@@ -76,8 +76,6 @@ namespace Oxide.Plugins
             permission.RegisterPermission(PermissionToggle, this);
             permission.RegisterPermission(PermissionManageTriggers, this);
 
-            Unsubscribe(nameof(OnEntitySpawned));
-
             if (!_pluginConfig.GenericMapMarker.Enabled)
             {
                 Unsubscribe(nameof(OnPlayerConnected));
@@ -86,20 +84,6 @@ namespace Oxide.Plugins
 
         private void OnServerInitialized()
         {
-            if (!_pluginConfig.EnableTerrainCollision)
-            {
-                foreach (var entity in BaseNetworkable.serverEntities)
-                {
-                    var trainCar = entity as TrainCar;
-                    if (trainCar != null)
-                    {
-                        EnableTerrainCollision(trainCar, false);
-                    }
-                }
-
-                Subscribe(nameof(OnEntitySpawned));
-            }
-
             _mapData = StoredMapData.Load();
             _triggerManager.SetMapData(_mapData);
 
@@ -108,18 +92,6 @@ namespace Oxide.Plugins
 
         private void Unload()
         {
-            if (!_pluginConfig.EnableTerrainCollision)
-            {
-                foreach (var entity in BaseNetworkable.serverEntities)
-                {
-                    var trainCar = entity as TrainCar;
-                    if (trainCar != null)
-                    {
-                        EnableTerrainCollision(trainCar, true);
-                    }
-                }
-            }
-
             if (_startupCoroutine != null)
                 ServerMgr.Instance.StopCoroutine(_startupCoroutine);
 
@@ -156,11 +128,6 @@ namespace Oxide.Plugins
             }
 
             _trainManager.ResendAllGenericMarkers();
-        }
-
-        private void OnEntitySpawned(TrainCar trainCar)
-        {
-            EnableTerrainCollision(trainCar, false);
         }
 
         private object OnTrainCarUncouple(TrainCar trainCar, BasePlayer player)
@@ -1090,12 +1057,6 @@ namespace Oxide.Plugins
 
             _pluginData.TrimToTrainEngineIds(foundTrainEngineIds);
             TrackEnd();
-        }
-
-        private void EnableTerrainCollision(TrainCar trainCar, bool enabled)
-        {
-            Physics.IgnoreCollision(trainCar.frontCollisionTrigger.triggerCollider, TerrainMeta.Collider, !enabled);
-            Physics.IgnoreCollision(trainCar.rearCollisionTrigger.triggerCollider, TerrainMeta.Collider, !enabled);
         }
 
         private bool AutomationWasBlocked(TrainEngine trainEngine)
@@ -4914,9 +4875,6 @@ namespace Oxide.Plugins
 
         private class Configuration : SerializableConfiguration
         {
-            [JsonProperty("EnableTerrainCollision")]
-            public bool EnableTerrainCollision = true;
-
             [JsonProperty("PlayHornForNearbyPlayersInRadius")]
             public float PlayHornForNearbyPlayersInRadius = 0f;
 
