@@ -22,7 +22,7 @@ using static TrainTrackSpline;
 
 namespace Oxide.Plugins
 {
-    [Info("Automated Workcarts", "WhiteThunder", "0.33.2")]
+    [Info("Automated Workcarts", "WhiteThunder", "0.34.0")]
     [Description("Automates workcarts with NPC conductors.")]
     internal class AutomatedWorkcarts : CovalencePlugin
     {
