@@ -21,7 +21,7 @@ using static TrainTrackSpline;
 
 namespace Oxide.Plugins
 {
-    [Info("Automated Workcarts", "WhiteThunder", "0.34.0")]
+    [Info("Automated Workcarts", "WhiteThunder", "0.34.1")]
     [Description("Automates workcarts with NPC conductors.")]
     internal class AutomatedWorkcarts : CovalencePlugin
     {
@@ -1723,6 +1723,26 @@ namespace Oxide.Plugins
 
             ["intersection"] = Quaternion.identity,
 
+            ["intersection-b1-n"] = Quaternion.identity,
+            ["intersection-b1-e"] = Quaternion.Euler(0, 90, 0),
+            ["intersection-b1-s"] = Quaternion.Euler(0, 180, 0),
+            ["intersection-b1-w"] = Quaternion.Euler(0, 270, 0),
+
+            ["intersection-b2-n"] = Quaternion.identity,
+            ["intersection-b2-e"] = Quaternion.Euler(0, 90, 0),
+            ["intersection-b2-s"] = Quaternion.Euler(0, 180, 0),
+            ["intersection-b2-w"] = Quaternion.Euler(0, 270, 0),
+
+            ["intersection-b3-n"] = Quaternion.identity,
+            ["intersection-b3-e"] = Quaternion.Euler(0, 90, 0),
+            ["intersection-b3-s"] = Quaternion.Euler(0, 180, 0),
+            ["intersection-b3-w"] = Quaternion.Euler(0, 270, 0),
+
+            ["intersection-b4-n"] = Quaternion.identity,
+            ["intersection-b4-e"] = Quaternion.Euler(0, 90, 0),
+            ["intersection-b4-s"] = Quaternion.Euler(0, 180, 0),
+            ["intersection-b4-w"] = Quaternion.Euler(0, 270, 0),
+
             ["intersection-b5-n"] = Quaternion.identity,
             ["intersection-b5-e"] = Quaternion.Euler(0, 90, 0),
             ["intersection-b5-s"] = Quaternion.Euler(0, 180, 0),
@@ -1761,6 +1781,26 @@ namespace Oxide.Plugins
             ["intersection-w"] = TunnelType.Intersection,
 
             ["intersection"] = TunnelType.LargeIntersection,
+
+            ["intersection-b1-n"] = TunnelType.VerticalIntersection,
+            ["intersection-b1-e"] = TunnelType.VerticalIntersection,
+            ["intersection-b1-s"] = TunnelType.VerticalIntersection,
+            ["intersection-b1-w"] = TunnelType.VerticalIntersection,
+
+            ["intersection-b2-n"] = TunnelType.VerticalIntersection,
+            ["intersection-b2-e"] = TunnelType.VerticalIntersection,
+            ["intersection-b2-s"] = TunnelType.VerticalIntersection,
+            ["intersection-b2-w"] = TunnelType.VerticalIntersection,
+
+            ["intersection-b3-n"] = TunnelType.VerticalIntersection,
+            ["intersection-b3-e"] = TunnelType.VerticalIntersection,
+            ["intersection-b3-s"] = TunnelType.VerticalIntersection,
+            ["intersection-b3-w"] = TunnelType.VerticalIntersection,
+
+            ["intersection-b4-n"] = TunnelType.VerticalIntersection,
+            ["intersection-b4-e"] = TunnelType.VerticalIntersection,
+            ["intersection-b4-s"] = TunnelType.VerticalIntersection,
+            ["intersection-b4-w"] = TunnelType.VerticalIntersection,
 
             ["intersection-b5-n"] = TunnelType.VerticalIntersection,
             ["intersection-b5-e"] = TunnelType.VerticalIntersection,
