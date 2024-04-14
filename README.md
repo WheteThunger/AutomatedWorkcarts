@@ -239,7 +239,7 @@ Default configuration:
     "Enabled": false,
     "Name": "Automated Train"
   },
-  "MapMarkerUpdateInveralSeconds": 5.0,
+  "MapMarkerUpdateIntervalSeconds": 5.0,
   "TriggerDisplayDistance": 150.0
 }
 ```
@@ -270,8 +270,8 @@ Default configuration:
   - `Radius` -- The marker radius.
 - `VendingMapMarker`
   - `Enabled` (`true` or `false`) -- Whether to enable vending machine map markers. Enabling this has a performance cost.
-  - `Name` -- The name to display when hoving the mouse over the marker.
-- `MapMarkerUpdateInveralSeconds` -- The number of seconds between map marker updates. Updating the map markers periodically for many trains can impact performance, so you may adjust this value to trade off between accuracy and performance.
+  - `Name` -- The name to display when hovering the mouse over the marker.
+- `MapMarkerUpdateIntervalSeconds` -- The number of seconds between map marker updates. Updating the map markers periodically for many trains can impact performance, so you may adjust this value to trade off between accuracy and performance.
 - `TriggerDisplayDistance ` -- Determines how close you must be to a trigger to see it when viewing triggers (e.g., after running `awt.show`).
 
 ## Routes (advanced)

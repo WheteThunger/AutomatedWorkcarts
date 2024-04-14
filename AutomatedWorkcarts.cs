@@ -4159,7 +4159,7 @@ namespace Oxide.Plugins
                     }
 
                     _plugin.TrackEnd();
-                }, 0, _config.MapMarkerUpdateInveralSeconds, _config.MapMarkerUpdateInveralSeconds * 0.1f);
+                }, 0, _config.MapMarkerUpdateIntervalSeconds, _config.MapMarkerUpdateIntervalSeconds * 0.1f);
             }
 
             private void EnableInvincibility()
@@ -5068,7 +5068,10 @@ namespace Oxide.Plugins
             public VendingMarkerOptions VendingMapMarker = new VendingMarkerOptions();
 
             [JsonProperty("MapMarkerUpdateInveralSeconds")]
-            public float MapMarkerUpdateInveralSeconds = 5.0f;
+            private float DeprecatedMapMarkerUpdateIntervalSeconds { set => MapMarkerUpdateIntervalSeconds = value; }
+
+            [JsonProperty("MapMarkerUpdateIntervalSeconds")]
+            public float MapMarkerUpdateIntervalSeconds = 5.0f;
 
             [JsonProperty("TriggerDisplayDistance")]
             public float TriggerDisplayDistance = 150;
