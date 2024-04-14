@@ -42,7 +42,7 @@ namespace Oxide.Plugins
             ?? typeof(TrainCoupling).GetField("isValid", BindingFlags.Public | BindingFlags.Instance);
 
         private readonly object False = false;
-        private static readonly Regex IdRegex = new Regex("\\$id", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex IdRegex = new("\\$id", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private readonly BasePlayer[] _playerQueryResults = new BasePlayer[64];
 
@@ -51,7 +51,7 @@ namespace Oxide.Plugins
         private StoredTunnelData _tunnelData;
         private StoredMapData _mapData;
 
-        private readonly SpawnedTrainCarTracker _spawnedTrainCarTracker = new SpawnedTrainCarTracker();
+        private readonly SpawnedTrainCarTracker _spawnedTrainCarTracker = new();
         private readonly TriggerManager _triggerManager;
         private readonly TrainManager _trainManager;
 
@@ -242,8 +242,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            Vector3 trackPosition;
-            if (!VerifyAimingAtTrackPosition(player, out trackPosition))
+            if (!VerifyAimingAtTrackPosition(player, out var trackPosition))
                 return;
 
             var triggerData = new TriggerData() { Position = trackPosition };
@@ -257,10 +256,8 @@ namespace Oxide.Plugins
                 || !VerifyPermission(player, PermissionManageTriggers))
                 return;
 
-            Vector3 trackPosition;
-            DungeonCellWrapper dungeonCellWrapper;
-            if (!VerifyAimingAtTrackPosition(player, out trackPosition)
-                || !VerifySupportedNearbyTrainTunnel(player, trackPosition, out dungeonCellWrapper))
+            if (!VerifyAimingAtTrackPosition(player, out var trackPosition)
+                || !VerifySupportedNearbyTrainTunnel(player, trackPosition, out var dungeonCellWrapper))
                 return;
 
             if (!_config.IsTunnelTypeEnabled(dungeonCellWrapper.TunnelType))
@@ -305,6 +302,7 @@ namespace Oxide.Plugins
                 {
                     rotation *= Quaternion.Inverse(dungeonCellWrapper.Rotation);
                 }
+
                 triggerData.RotationAngle = rotation.eulerAngles.y % 360;
             }
 
@@ -322,9 +320,7 @@ namespace Oxide.Plugins
         [Command("aw.updatetrigger", "awt.update")]
         private void CommandUpdateTrigger(IPlayer player, string cmd, string[] args)
         {
-            TriggerData triggerData;
-            string[] optionArgs;
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.UpdateTriggerSyntax, out triggerData, out optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.UpdateTriggerSyntax, out var triggerData, out var optionArgs))
                 return;
 
             if (optionArgs.Length == 0)
@@ -355,9 +351,7 @@ namespace Oxide.Plugins
         [Command("aw.replacetrigger", "awt.replace")]
         private void CommandReplaceTrigger(IPlayer player, string cmd, string[] args)
         {
-            TriggerData triggerData;
-            string[] optionArgs;
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.UpdateTriggerSyntax, out triggerData, out optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.UpdateTriggerSyntax, out var triggerData, out var optionArgs))
                 return;
 
             if (optionArgs.Length == 0)
@@ -388,9 +382,7 @@ namespace Oxide.Plugins
         [Command("aw.enabletrigger", "awt.enable")]
         private void CommandEnableTrigger(IPlayer player, string cmd, string[] args)
         {
-            TriggerData triggerData;
-            string[] optionArgs;
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out triggerData, out optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out var optionArgs))
                 return;
 
             var newTriggerData = triggerData.Clone();
@@ -405,9 +397,7 @@ namespace Oxide.Plugins
         [Command("aw.disabletrigger", "awt.disable")]
         private void CommandDisableTrigger(IPlayer player, string cmd, string[] args)
         {
-            TriggerData triggerData;
-            string[] optionArgs;
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out triggerData, out optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out var optionArgs))
                 return;
 
             var newTriggerData = triggerData.Clone();
@@ -422,20 +412,15 @@ namespace Oxide.Plugins
         [Command("aw.movetrigger", "awt.move")]
         private void CommandMoveTrigger(IPlayer player, string cmd, string[] args)
         {
-            TriggerData triggerData;
-            string[] optionArgs;
-
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out triggerData, out optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out var optionArgs))
                 return;
 
-            Vector3 trackPosition;
-            if (!VerifyAimingAtTrackPosition(player, out trackPosition))
+            if (!VerifyAimingAtTrackPosition(player, out var trackPosition))
                 return;
 
             if (triggerData.TriggerType == TrainTriggerType.Tunnel)
             {
-                DungeonCellWrapper dungeonCellWrapper;
-                if (!VerifySupportedNearbyTrainTunnel(player, trackPosition, out dungeonCellWrapper))
+                if (!VerifySupportedNearbyTrainTunnel(player, trackPosition, out var dungeonCellWrapper))
                     return;
 
                 if (dungeonCellWrapper.TunnelType != triggerData.GetTunnelType())
@@ -462,10 +447,7 @@ namespace Oxide.Plugins
         [Command("aw.removetrigger", "awt.remove")]
         private void CommandRemoveTrigger(IPlayer player, string cmd, string[] args)
         {
-            TriggerData triggerData;
-            string[] optionArgs;
-
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out triggerData, out optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out var optionArgs))
                 return;
 
             _triggerManager.RemoveTrigger(triggerData);
@@ -478,10 +460,7 @@ namespace Oxide.Plugins
         [Command("aw.rotatetrigger", "awt.rotate")]
         private void CommandSetTriggerRotation(IPlayer player, string cmd, string[] args)
         {
-            TriggerData triggerData;
-            string[] optionArgs;
-
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out triggerData, out optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out var optionArgs))
                 return;
 
             var basePlayer = player.Object as BasePlayer;
@@ -489,8 +468,7 @@ namespace Oxide.Plugins
 
             var triggerInstance = _triggerManager.FindNearestTrigger(playerPosition, triggerData);
             var rotation = Quaternion.Euler(basePlayer.viewAngles);
-            var tunnelTriggerInstance = triggerInstance as TunnelTriggerInstance;
-            if (tunnelTriggerInstance != null)
+            if (triggerInstance is TunnelTriggerInstance tunnelTriggerInstance)
             {
                 rotation *= Quaternion.Inverse(tunnelTriggerInstance.DungeonCellWrapper.Rotation);
             }
@@ -504,10 +482,7 @@ namespace Oxide.Plugins
         [Command("aw.respawntrigger", "awt.respawn")]
         private void CommandRespawnTrigger(IPlayer player, string cmd, string[] args)
         {
-            TriggerData triggerData;
-            string[] optionArgs;
-
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out triggerData, out optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out var optionArgs))
                 return;
 
             if (!triggerData.IsSpawner)
@@ -531,10 +506,7 @@ namespace Oxide.Plugins
         [Command("aw.addtriggercommand", "awt.addcommand", "awt.addcmd")]
         private void CommandAddCommand(IPlayer player, string cmd, string[] args)
         {
-            TriggerData triggerData;
-            string[] optionArgs;
-
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.AddCommandSyntax, out triggerData, out optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.AddCommandSyntax, out var triggerData, out var optionArgs))
                 return;
 
             if (optionArgs.Length < 1)
@@ -554,14 +526,10 @@ namespace Oxide.Plugins
         [Command("aw.removetriggercommand", "awt.removecommand", "awt.removecmd")]
         private void CommandRemoveCommand(IPlayer player, string cmd, string[] args)
         {
-            TriggerData triggerData;
-            string[] optionArgs;
-
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.RemoveCommandSyntax, out triggerData, out optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.RemoveCommandSyntax, out var triggerData, out var optionArgs))
                 return;
 
-            int commandIndex;
-            if (optionArgs.Length < 1 || !int.TryParse(optionArgs[0], out commandIndex))
+            if (optionArgs.Length < 1 || !int.TryParse(optionArgs[0], out var commandIndex))
             {
                 ReplyToPlayer(player, Lang.RemoveCommandSyntax, cmd);
                 return;
@@ -583,10 +551,7 @@ namespace Oxide.Plugins
         [Command("aw.settriggertrain", "awt.train")]
         private void CommandTriggerTrain(IPlayer player, string cmd, string[] args)
         {
-            TriggerData triggerData;
-            string[] optionArgs;
-
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.RemoveCommandSyntax, out triggerData, out optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.RemoveCommandSyntax, out var triggerData, out var optionArgs))
                 return;
 
             var trainCarAliases = new List<string>();
@@ -626,8 +591,7 @@ namespace Oxide.Plugins
             {
                 if (duration == 60)
                 {
-                    int argIntValue;
-                    if (int.TryParse(arg, out argIntValue))
+                    if (int.TryParse(arg, out var argIntValue))
                     {
                         duration = argIntValue;
                         continue;
@@ -714,8 +678,7 @@ namespace Oxide.Plugins
 
         private bool IsCargoTrain(TrainEngine trainEngine)
         {
-            var result = CargoTrainEvent?.Call("IsTrainSpecial", trainEngine.net.ID);
-            return result is bool && (bool)result;
+            return CargoTrainEvent?.Call("IsTrainSpecial", trainEngine.net.ID) is true;
         }
 
         #endregion
@@ -819,9 +782,7 @@ namespace Oxide.Plugins
                 || !VerifyAnyTriggers(player))
                 return false;
 
-            int triggerId;
-            TrainTriggerType triggerType;
-            if (args.Length > 0 && IsTriggerArg(player, args[0], out triggerId, out triggerType))
+            if (args.Length > 0 && IsTriggerArg(player, args[0], out var triggerId, out var triggerType))
             {
                 optionArgs = args.Skip(1).ToArray();
                 return VerifyTriggerExists(player, triggerId, triggerType, out triggerData);
@@ -852,7 +813,7 @@ namespace Oxide.Plugins
         private bool VerifyValidArgAndModifyTrigger(IPlayer player, string cmd, string arg, TriggerData triggerData, string errorMessageName)
         {
             var argLower = arg.ToLower();
-            if (argLower == "start" || argLower == "conductor")
+            if (argLower is "start" or "conductor")
             {
                 triggerData.AddConductor = true;
                 return true;
@@ -899,8 +860,7 @@ namespace Oxide.Plugins
                 return true;
             }
 
-            float stopDuration;
-            if (float.TryParse(arg, out stopDuration))
+            if (float.TryParse(arg, out var stopDuration))
             {
                 triggerData.StopDuration = stopDuration;
                 return true;
@@ -913,8 +873,7 @@ namespace Oxide.Plugins
                 return true;
             }
 
-            SpeedInstruction speedInstruction;
-            if (Enum.TryParse(arg, true, out speedInstruction))
+            if (Enum.TryParse(arg, true, out SpeedInstruction speedInstruction))
             {
                 var speedString = speedInstruction.ToString();
 
@@ -931,15 +890,13 @@ namespace Oxide.Plugins
                 return true;
             }
 
-            DirectionInstruction directionInstruction;
-            if (Enum.TryParse(arg, true, out directionInstruction))
+            if (Enum.TryParse(arg, true, out DirectionInstruction directionInstruction))
             {
                 triggerData.Direction = directionInstruction.ToString();
                 return true;
             }
 
-            TrackSelectionInstruction trackSelectionInstruction;
-            if (Enum.TryParse(arg, true, out trackSelectionInstruction))
+            if (Enum.TryParse(arg, true, out TrackSelectionInstruction trackSelectionInstruction))
             {
                 triggerData.TrackSelection = trackSelectionInstruction.ToString();
                 return true;
@@ -1035,7 +992,7 @@ namespace Oxide.Plugins
         private static string GetRouteNameFromArg(string routeName, bool requirePrefix = true)
         {
             if (routeName.StartsWith("@"))
-                return routeName.Substring(1);
+                return routeName[1..];
 
             return requirePrefix ? null : routeName;
         }
@@ -1078,8 +1035,7 @@ namespace Oxide.Plugins
 
         private bool AutomationWasBlocked(TrainEngine trainEngine)
         {
-            var hookResult = ExposedHooks.OnWorkcartAutomationStart(trainEngine);
-            if (hookResult is bool && (bool)hookResult == false)
+            if (ExposedHooks.OnWorkcartAutomationStart(trainEngine) is false)
                 return true;
 
             if (IsCargoTrain(trainEngine))
@@ -1139,19 +1095,17 @@ namespace Oxide.Plugins
             return GetLeadTrainEngine(trainCar.completeTrain);
         }
 
-        private static void DetermineTrainCarOrientations(TrainCar trainCar, Vector3 forward, TrainCar otherTrainCar, Vector3 otherForward, out TrainCar forwardTrainCar, out TrainCar backwardTrainCar)
+        private static void DetermineTrainCarOrientations(TrainCar trainCar, Vector3 forward, TrainCar otherTrainCar, out TrainCar forwardTrainCar)
         {
             var position = trainCar.transform.position;
             var otherPosition = otherTrainCar.transform.position;
             var forwardPosition = position + forward * 100f;
 
             forwardTrainCar = trainCar;
-            backwardTrainCar = otherTrainCar;
 
             if ((forwardPosition - position).sqrMagnitude > (forwardPosition - otherPosition).sqrMagnitude)
             {
                 forwardTrainCar = otherTrainCar;
-                backwardTrainCar = trainCar;
             }
         }
 
@@ -1211,8 +1165,7 @@ namespace Oxide.Plugins
 
         private static float GetSplineDistance(TrainTrackSpline spline, Vector3 position)
         {
-            float distanceOnSpline;
-            spline.GetDistance(position, 1, out distanceOnSpline);
+            spline.GetDistance(position, 1, out var distanceOnSpline);
             return distanceOnSpline;
         }
 
@@ -1255,11 +1208,9 @@ namespace Oxide.Plugins
 
             var finalDistance = wheelToRearCouplingDistance + GetTrainCarFrontCouplingOffsetZ(trainCarPrefab);
 
-            SplineInfo finalSplineInfo;
-            var finalPosition = GetPositionAlongTrack(splineInfo, finalDistance, trackSelection, out finalSplineInfo);
+            var finalPosition = GetPositionAlongTrack(splineInfo, finalDistance, trackSelection, out var finalSplineInfo);
 
-            SplineInfo spawnSplineInfo;
-            var resultPosition = GetPositionAlongTrack(finalSplineInfo, spawnDistanceOffset, trackSelection, out spawnSplineInfo);
+            var resultPosition = GetPositionAlongTrack(finalSplineInfo, spawnDistanceOffset, trackSelection, out var spawnSplineInfo);
             var resultRotation = GetSplineTangentRotation(spawnSplineInfo.Spline, spawnSplineInfo.Distance, frontTrainCar.transform.rotation);
 
             if (trainCarPrefab.Reverse != frontTrainCarPrefab.Reverse)
@@ -1344,8 +1295,7 @@ namespace Oxide.Plugins
 
         private static Quaternion GetSplineTangentRotation(TrainTrackSpline spline, float distanceOnSpline, Quaternion approximateRotation)
         {
-            Vector3 tangentDirection;
-            spline.GetPositionAndTangent(distanceOnSpline, approximateRotation * Vector3.forward, out tangentDirection);
+            spline.GetPositionAndTangent(distanceOnSpline, approximateRotation * Vector3.forward, out var tangentDirection);
             return Quaternion.LookRotation(tangentDirection);
         }
 
@@ -1411,8 +1361,7 @@ namespace Oxide.Plugins
 
         private static Vector3 GetPositionAlongTrack(SplineInfo splineInfo, float desiredDistance, TrackSelection trackSelection, out SplineInfo resultSplineInfo)
         {
-            float remainingDistance;
-            return GetPositionAlongTrack(splineInfo, desiredDistance, trackSelection, out resultSplineInfo, out remainingDistance);
+            return GetPositionAlongTrack(splineInfo, desiredDistance, trackSelection, out resultSplineInfo, out var remainingDistance);
         }
 
         private static bool IsTrainOwned(TrainCar trainCar)
@@ -1474,8 +1423,7 @@ namespace Oxide.Plugins
 
         private static bool TryGetHitPosition(BasePlayer player, out Vector3 position, float maxDistance)
         {
-            RaycastHit hit;
-            if (Physics.Raycast(player.eyes.HeadRay(), out hit, maxDistance, Rust.Layers.Solid, QueryTriggerInteraction.Ignore))
+            if (Physics.Raycast(player.eyes.HeadRay(), out var hit, maxDistance, Layers.Solid, QueryTriggerInteraction.Ignore))
             {
                 position = hit.point;
                 return true;
@@ -1487,16 +1435,13 @@ namespace Oxide.Plugins
 
         private static bool TryGetTrackPosition(BasePlayer player, out Vector3 trackPosition, float maxDistance = 30)
         {
-            Vector3 hitPosition;
-            if (!TryGetHitPosition(player, out hitPosition, maxDistance))
+            if (!TryGetHitPosition(player, out var hitPosition, maxDistance))
             {
                 trackPosition = Vector3.zero;
                 return false;
             }
 
-            TrainTrackSpline spline;
-            float distanceResult;
-            if (!TryFindTrackNear(hitPosition, 5, out spline, out distanceResult))
+            if (!TryFindTrackNear(hitPosition, 5, out var spline, out var distanceResult))
             {
                 trackPosition = Vector3.zero;
                 return false;
@@ -1508,8 +1453,7 @@ namespace Oxide.Plugins
 
         private static TrainTrigger GetHitTrigger(BasePlayer player, float maxDistance = 30)
         {
-            RaycastHit hit;
-            return Physics.Raycast(player.eyes.HeadRay(), out hit, maxDistance, 1 << TrainTrigger.TriggerLayer, QueryTriggerInteraction.Collide)
+            return Physics.Raycast(player.eyes.HeadRay(), out var hit, maxDistance, 1 << TrainTrigger.TriggerLayer, QueryTriggerInteraction.Collide)
                 ? hit.collider.GetComponent<TrainTrigger>()
                 : null;
         }
@@ -1556,8 +1500,7 @@ namespace Oxide.Plugins
 
         private static BaseEntity GetLookEntity(BasePlayer player, int layerMask = Physics.DefaultRaycastLayers, float maxDistance = 20)
         {
-            RaycastHit hit;
-            return Physics.Raycast(player.eyes.HeadRay(), out hit, maxDistance, layerMask, QueryTriggerInteraction.Ignore)
+            return Physics.Raycast(player.eyes.HeadRay(), out var hit, maxDistance, layerMask, QueryTriggerInteraction.Ignore)
                 ? hit.GetEntity()
                 : null;
         }
@@ -1577,8 +1520,10 @@ namespace Oxide.Plugins
                 Effect.server.Run(BradleyExplosionEffectPrefab, trainCar.GetExplosionPos(), Vector3.up, sourceConnection: null, broadcast: true);
             }
 
-            var hitInfo = new HitInfo(null, trainCar, DamageType.Explosion, float.MaxValue, trainCar.transform.position);
-            hitInfo.UseProtection = false;
+            var hitInfo = new HitInfo(null, trainCar, DamageType.Explosion, float.MaxValue, trainCar.transform.position)
+            {
+                UseProtection = false,
+            };
             trainCar.Die(hitInfo);
         }
 
@@ -1627,7 +1572,7 @@ namespace Oxide.Plugins
             private const string WagonResourcePrefab = "assets/content/vehicles/trains/wagons/trainwagonunloadable.entity.prefab";
             private const string CaboosePrefab = "assets/content/vehicles/trains/caboose/traincaboose.entity.prefab";
 
-            private static readonly Dictionary<string, TrainCarPrefab> AllowedPrefabs = new Dictionary<string, TrainCarPrefab>(StringComparer.InvariantCultureIgnoreCase)
+            private static readonly Dictionary<string, TrainCarPrefab> AllowedPrefabs = new(StringComparer.InvariantCultureIgnoreCase)
             {
                 ["Locomotive"] = new TrainCarPrefab("Locomotive", LocomotivePrefab),
                 ["Sedan"] = new TrainCarPrefab("Sedan", SedanPrefab),
@@ -1656,8 +1601,7 @@ namespace Oxide.Plugins
 
             public static TrainCarPrefab FindPrefab(string trainCarAlias)
             {
-                TrainCarPrefab trainCarPrefab;
-                return AllowedPrefabs.TryGetValue(trainCarAlias, out trainCarPrefab)
+                return AllowedPrefabs.TryGetValue(trainCarAlias, out var trainCarPrefab)
                     ? trainCarPrefab
                     : null;
             }
@@ -1695,7 +1639,7 @@ namespace Oxide.Plugins
             Unsupported
         }
 
-        private static readonly Dictionary<string, Quaternion> DungeonRotations = new Dictionary<string, Quaternion>
+        private static readonly Dictionary<string, Quaternion> DungeonRotations = new()
         {
             ["station-sn-0"] = Quaternion.Euler(0, 180, 0),
             ["station-sn-1"] = Quaternion.identity,
@@ -1754,7 +1698,7 @@ namespace Oxide.Plugins
             ["intersection-b6-w"] = Quaternion.Euler(0, 270, 0),
         };
 
-        private static readonly Dictionary<string, TunnelType> DungeonCellTypes = new Dictionary<string, TunnelType>
+        private static readonly Dictionary<string, TunnelType> DungeonCellTypes = new()
         {
             ["station-sn-0"] = TunnelType.TrainStation,
             ["station-sn-1"] = TunnelType.TrainStation,
@@ -1813,7 +1757,7 @@ namespace Oxide.Plugins
             ["intersection-b6-w"] = TunnelType.VerticalIntersection,
         };
 
-        private static readonly Dictionary<TunnelType, Vector3> DungeonCellDimensions = new Dictionary<TunnelType, Vector3>()
+        private static readonly Dictionary<TunnelType, Vector3> DungeonCellDimensions = new()
         {
             [TunnelType.TrainStation] = new Vector3(108, 8.5f, 216),
             [TunnelType.BarricadeTunnel] = new Vector3(16.5f, 8.5f, 216),
@@ -1832,16 +1776,14 @@ namespace Oxide.Plugins
 
             private static TunnelType GetTunnelType(string shortName)
             {
-                TunnelType tunnelType;
-                return DungeonCellTypes.TryGetValue(shortName, out tunnelType)
+                return DungeonCellTypes.TryGetValue(shortName, out var tunnelType)
                     ? tunnelType
                     : TunnelType.Unsupported;
             }
 
             public static Quaternion GetRotation(string shortName)
             {
-                Quaternion rotation;
-                return DungeonRotations.TryGetValue(shortName, out rotation)
+                return DungeonRotations.TryGetValue(shortName, out var rotation)
                     ? rotation
                     : Quaternion.identity;
             }
@@ -1860,8 +1802,7 @@ namespace Oxide.Plugins
                 Position = dungeonCell.transform.position;
                 Rotation = GetRotation(ShortName);
 
-                Vector3 dimensions;
-                if (DungeonCellDimensions.TryGetValue(TunnelType, out dimensions))
+                if (DungeonCellDimensions.TryGetValue(TunnelType, out var dimensions))
                 {
                     _boundingBox = new OBB(Position + new Vector3(0, dimensions.y / 2, 0), dimensions, Rotation);
                 }
@@ -2057,10 +1998,7 @@ namespace Oxide.Plugins
 
             private void HandleTrainCar(TrainCar trainCar)
             {
-                if (entityContents == null)
-                {
-                    entityContents = new HashSet<BaseEntity>();
-                }
+                entityContents ??= new HashSet<BaseEntity>();
 
                 // Ignore the trigger if the train car is already colliding with it.
                 if (!entityContents.Add(trainCar))
@@ -2200,8 +2138,7 @@ namespace Oxide.Plugins
 
                 if (!string.IsNullOrWhiteSpace(TunnelType))
                 {
-                    TunnelType tunnelType;
-                    if (Enum.TryParse(TunnelType, out tunnelType))
+                    if (Enum.TryParse(TunnelType, out TunnelType tunnelType))
                     {
                         _tunnelType = tunnelType;
                     }
@@ -2215,8 +2152,7 @@ namespace Oxide.Plugins
             {
                 if (_speedInstruction == null && !string.IsNullOrWhiteSpace(Speed))
                 {
-                    SpeedInstruction speed;
-                    if (Enum.TryParse(Speed, out speed))
+                    if (Enum.TryParse(Speed, out SpeedInstruction speed))
                     {
                         _speedInstruction = speed;
                     }
@@ -2236,8 +2172,7 @@ namespace Oxide.Plugins
             {
                 if (_directionInstruction == null && !string.IsNullOrWhiteSpace(Direction))
                 {
-                    DirectionInstruction direction;
-                    if (Enum.TryParse(Direction, out direction))
+                    if (Enum.TryParse(Direction, out DirectionInstruction direction))
                     {
                         _directionInstruction = direction;
                     }
@@ -2251,8 +2186,7 @@ namespace Oxide.Plugins
             {
                 if (_trackSelectionInstruction == null && !string.IsNullOrWhiteSpace(TrackSelection))
                 {
-                    TrackSelectionInstruction trackSelection;
-                    if (Enum.TryParse(TrackSelection, out trackSelection))
+                    if (Enum.TryParse(TrackSelection, out TrackSelectionInstruction trackSelection))
                     {
                         _trackSelectionInstruction = trackSelection;
                     }
@@ -2266,8 +2200,7 @@ namespace Oxide.Plugins
             {
                 if (_departureSpeedInstruction == null && !string.IsNullOrWhiteSpace(Speed))
                 {
-                    SpeedInstruction speed;
-                    if (Enum.TryParse(DepartureSpeed, out speed))
+                    if (Enum.TryParse(DepartureSpeed, out SpeedInstruction speed))
                     {
                         _departureSpeedInstruction = speed;
                     }
@@ -2381,7 +2314,7 @@ namespace Oxide.Plugins
 
         private class SpawnedTrainCarTracker
         {
-            private HashSet<TrainCar> _spawnedTrainCars = new HashSet<TrainCar>();
+            private HashSet<TrainCar> _spawnedTrainCars = new();
 
             public bool ContainsTrainCar(TrainCar trainCar)
             {
@@ -2428,7 +2361,7 @@ namespace Oxide.Plugins
             private const int MaxSpawnedTrains = 1;
             private const float TimeBetweenSpawns = 30;
 
-            protected static readonly Vector3 TriggerOffset = new Vector3(0, 0.9f, 0);
+            protected static readonly Vector3 TriggerOffset = new(0, 0.9f, 0);
 
             public TrainManager TrainManager { get; }
             public TriggerData TriggerData { get; }
@@ -2481,9 +2414,7 @@ namespace Oxide.Plugins
 
                 _gameObject.transform.SetPositionAndRotation(TriggerPosition, WorldRotation);
 
-                TrainTrackSpline spline;
-                float distanceOnSpline;
-                if (TryFindTrackNear(WorldPosition, 2, out spline, out distanceOnSpline))
+                if (TryFindTrackNear(WorldPosition, 2, out var spline, out var distanceOnSpline))
                 {
                     Spline = spline;
                     DistanceOnSpline = distanceOnSpline;
@@ -2585,11 +2516,7 @@ namespace Oxide.Plugins
 
             private void StartSpawningTrains()
             {
-                if (_spawnedTrains == null)
-                {
-                    _spawnedTrains = new List<TrainCar>(MaxSpawnedTrains);
-                }
-
+                _spawnedTrains ??= new List<TrainCar>(MaxSpawnedTrains);
                 _trainTrigger.InvokeRepeating(SpawnTrainTracked, UnityEngine.Random.Range(0f, 1f), TimeBetweenSpawns);
             }
 
@@ -2863,9 +2790,9 @@ namespace Oxide.Plugins
 
             private AutomatedWorkcarts _plugin;
             private TrainManager _trainManager;
-            private Dictionary<TriggerData, BaseTriggerController> _triggerControllers = new Dictionary<TriggerData, BaseTriggerController>();
-            private Dictionary<TrainTrackSpline, List<BaseTriggerInstance>> _splinesToTriggers = new Dictionary<TrainTrackSpline, List<BaseTriggerInstance>>();
-            private Dictionary<ulong, PlayerInfo> _playerInfo = new Dictionary<ulong, PlayerInfo>();
+            private Dictionary<TriggerData, BaseTriggerController> _triggerControllers = new();
+            private Dictionary<TrainTrackSpline, List<BaseTriggerInstance>> _splinesToTriggers = new();
+            private Dictionary<ulong, PlayerInfo> _playerInfo = new();
 
             private Configuration _config => _plugin._config;
             private StoredTunnelData _tunnelData => _plugin._tunnelData;
@@ -2880,8 +2807,7 @@ namespace Oxide.Plugins
 
             private void RegisterTriggerWithSpline(BaseTriggerInstance triggerInstance, TrainTrackSpline spline)
             {
-                List<BaseTriggerInstance> triggerInstanceList;
-                if (!_splinesToTriggers.TryGetValue(spline, out triggerInstanceList))
+                if (!_splinesToTriggers.TryGetValue(spline, out var triggerInstanceList))
                 {
                     triggerInstanceList = new List<BaseTriggerInstance>() { triggerInstance };
                     _splinesToTriggers[spline] = triggerInstanceList;
@@ -2894,8 +2820,7 @@ namespace Oxide.Plugins
 
             private void UnregisterTriggerFromSpline(BaseTriggerInstance triggerInstance, TrainTrackSpline spline)
             {
-                List<BaseTriggerInstance> triggerInstanceList;
-                if (_splinesToTriggers.TryGetValue(spline, out triggerInstanceList))
+                if (_splinesToTriggers.TryGetValue(spline, out var triggerInstanceList))
                 {
                     triggerInstanceList.Remove(triggerInstance);
                     if (triggerInstanceList.Count == 0)
@@ -2976,8 +2901,7 @@ namespace Oxide.Plugins
 
             private BaseTriggerController GetTriggerController(TriggerData triggerData)
             {
-                BaseTriggerController triggerController;
-                return _triggerControllers.TryGetValue(triggerData, out triggerController)
+                return _triggerControllers.TryGetValue(triggerData, out var triggerController)
                     ? triggerController
                     : null;
             }
@@ -3052,10 +2976,7 @@ namespace Oxide.Plugins
 
             public void AddTriggerCommand(TriggerData triggerData, string command)
             {
-                if (triggerData.Commands == null)
-                {
-                    triggerData.Commands = new List<string>();
-                }
+                triggerData.Commands ??= new List<string>();
 
                 if (triggerData.Commands.Contains(command, StringComparer.InvariantCultureIgnoreCase))
                     return;
@@ -3150,8 +3071,7 @@ namespace Oxide.Plugins
 
             private PlayerInfo GetOrCreatePlayerInfo(BasePlayer player)
             {
-                PlayerInfo playerInfo;
-                if (!_playerInfo.TryGetValue(player.userID, out playerInfo))
+                if (!_playerInfo.TryGetValue(player.userID, out var playerInfo))
                 {
                     playerInfo = new PlayerInfo();
                     _playerInfo[player.userID] = playerInfo;
@@ -3175,7 +3095,7 @@ namespace Oxide.Plugins
 
                 ShowNearbyTriggers(player, player.transform.position, playerInfo.Route);
 
-                if (playerInfo.Timer != null && !playerInfo.Timer.Destroyed)
+                if (playerInfo.Timer is { Destroyed: false })
                 {
                     var newDuration = duration >= 0 ? duration : Math.Max(playerInfo.Timer.Repetitions, 60);
                     playerInfo.Timer.Reset(delay: -1, repetitions: newDuration);
@@ -3336,7 +3256,7 @@ namespace Oxide.Plugins
                     }
                 }
 
-                if (triggerData.Commands != null && triggerData.Commands.Count > 0)
+                if (triggerData.Commands is { Count: > 0 })
                 {
                     var commandList = "";
                     for (var i = 0; i < triggerData.Commands.Count; i++)
@@ -3358,8 +3278,7 @@ namespace Oxide.Plugins
 
                 foreach (var triggerController in _triggerControllers.Values)
                 {
-                    float distanceSquared;
-                    var triggerInstance = triggerController.FindNearest(position, maxDistanceSquared, out distanceSquared);
+                    var triggerInstance = triggerController.FindNearest(position, maxDistanceSquared, out var distanceSquared);
 
                     if (distanceSquared < closestDistanceSquared && distanceSquared <= maxDistanceSquared)
                     {
@@ -3373,8 +3292,7 @@ namespace Oxide.Plugins
 
             public BaseTriggerInstance FindNearestTrigger(Vector3 position, TriggerData triggerData, float maxDistanceSquared = float.MaxValue)
             {
-                float distanceSquared;
-                return GetTriggerController(triggerData)?.FindNearest(position, maxDistanceSquared, out distanceSquared);
+                return GetTriggerController(triggerData)?.FindNearest(position, maxDistanceSquared, out _);
             }
 
             public TriggerData FindNearestTriggerWhereAiming(BasePlayer player, float maxDistanceSquared = 9)
@@ -3383,8 +3301,7 @@ namespace Oxide.Plugins
                 if (triggerInstance != null)
                     return triggerInstance.TriggerData;
 
-                Vector3 trackPosition;
-                if (!TryGetTrackPosition(player, out trackPosition))
+                if (!TryGetTrackPosition(player, out var trackPosition))
                     return null;
 
                 return FindNearestTrigger(trackPosition, maxDistanceSquared)?.TriggerData;
@@ -3400,8 +3317,8 @@ namespace Oxide.Plugins
             public SpawnedTrainCarTracker SpawnedTrainCarTracker { get; }
 
             private AutomatedWorkcarts _plugin;
-            private HashSet<TrainController> _trainControllers = new HashSet<TrainController>();
-            private Dictionary<TrainCar, ITrainCarComponent> _trainCarComponents = new Dictionary<TrainCar, ITrainCarComponent>();
+            private HashSet<TrainController> _trainControllers = new();
+            private Dictionary<TrainCar, ITrainCarComponent> _trainCarComponents = new();
             private bool _isUnloading;
 
             public int TrainCount => _trainControllers.Count;
@@ -3455,8 +3372,7 @@ namespace Oxide.Plugins
 
             public TrainController GetTrainController(TrainCar trainCar)
             {
-                ITrainCarComponent trainCarComponent;
-                return _trainCarComponents.TryGetValue(trainCar, out trainCarComponent)
+                return _trainCarComponents.TryGetValue(trainCar, out var trainCarComponent)
                     ? trainCarComponent.TrainController
                     : null;
             }
@@ -3478,13 +3394,10 @@ namespace Oxide.Plugins
                         return false;
                 }
 
-                if (trainEngineData == null)
+                trainEngineData ??= new TrainEngineData
                 {
-                    trainEngineData = new TrainEngineData
-                    {
-                        Route = triggerData?.Route,
-                    };
-                }
+                    Route = triggerData?.Route,
+                };
 
                 var trainController = new TrainController(_plugin, this, trainEngineData, countsTowardConductorLimit);
                 _trainControllers.Add(trainController);
@@ -3775,8 +3688,8 @@ namespace Oxide.Plugins
                 _trainState as DrivingState ?? (_trainState as TransitionState)?.GetNextStateOfType<DrivingState>();
 
             private AutomatedWorkcarts _plugin;
-            private readonly List<TrainEngineController> _trainEngineControllers = new List<TrainEngineController>();
-            private readonly List<ITrainCarComponent> _trainCarComponents = new List<ITrainCarComponent>();
+            private readonly List<TrainEngineController> _trainEngineControllers = new();
+            private readonly List<ITrainCarComponent> _trainCarComponents = new();
 
             private TrainState _trainState;
             private TrainEngineData _trainEngineData;
@@ -3885,7 +3798,7 @@ namespace Oxide.Plugins
                 if (!triggerData.MatchesRoute(_trainEngineData.Route))
                     return;
 
-                if (triggerData.Commands != null && triggerData.Commands.Count > 0)
+                if (triggerData.Commands is { Count: > 0 })
                 {
                     foreach (var command in triggerData.Commands)
                     {
@@ -4229,7 +4142,7 @@ namespace Oxide.Plugins
                     HandleTrainCar(trainCar);
                 }
 
-                if (entity is JunkPile || entity is LootContainer)
+                if (entity is JunkPile or LootContainer)
                 {
                     var entity2 = entity;
                     entity.Invoke(() =>
@@ -4245,10 +4158,7 @@ namespace Oxide.Plugins
 
             private void HandleTrainCar(TrainCar otherTrainCar)
             {
-                if (entityContents == null)
-                {
-                    entityContents = new HashSet<BaseEntity>();
-                }
+                entityContents ??= new HashSet<BaseEntity>();
 
                 // Ignore if already colliding with that train car.
                 if (!entityContents.Add(otherTrainCar))
@@ -4262,9 +4172,7 @@ namespace Oxide.Plugins
                 if (Vector3.Dot(forward, otherForward) >= 0.01f)
                 {
                     // Going same direction.
-                    TrainCar forwardTrainCar;
-                    TrainCar backwardTrainCar;
-                    DetermineTrainCarOrientations(TrainCar, forward, otherTrainCar, otherForward, out forwardTrainCar, out backwardTrainCar);
+                    DetermineTrainCarOrientations(TrainCar, forward, otherTrainCar, out var forwardTrainCar);
 
                     var forwardController = TrainController;
                     var backwardController = otherController;
@@ -4566,7 +4474,7 @@ namespace Oxide.Plugins
             public HashSet<ulong> AutomatedWorkcartIds;
 
             [JsonProperty("AutomatedWorkcarts")]
-            public Dictionary<ulong, TrainEngineData> AutomatedTrainEngines = new Dictionary<ulong, TrainEngineData>();
+            public Dictionary<ulong, TrainEngineData> AutomatedTrainEngines = new();
 
             [JsonIgnore]
             private bool _isDirty;
@@ -4606,8 +4514,7 @@ namespace Oxide.Plugins
 
             public TrainEngineData GetTrainEngineData(ulong trainCarId)
             {
-                TrainEngineData trainEngineData;
-                return AutomatedTrainEngines.TryGetValue(trainCarId, out trainEngineData)
+                return AutomatedTrainEngines.TryGetValue(trainCarId, out var trainEngineData)
                     ? trainEngineData
                     : null;
             }
@@ -4647,7 +4554,7 @@ namespace Oxide.Plugins
         private class StoredMapData
         {
             [JsonProperty("MapTriggers")]
-            public List<TriggerData> MapTriggers = new List<TriggerData>();
+            public List<TriggerData> MapTriggers = new();
 
             // Return example: proceduralmap.1500.548423.212
             private static string GetPerWipeSaveName()
@@ -4659,7 +4566,7 @@ namespace Oxide.Plugins
             private static string GetCrossWipeSaveName()
             {
                 var saveName = GetPerWipeSaveName();
-                return saveName.Substring(0, saveName.LastIndexOf("."));
+                return saveName[..saveName.LastIndexOf(".")];
             }
 
             private static bool IsProcedural() => World.SaveFileName.StartsWith("proceduralmap");
@@ -4801,7 +4708,7 @@ namespace Oxide.Plugins
             public float DataFileVersion;
 
             [JsonProperty("TunnelTriggers")]
-            public List<TriggerData> TunnelTriggers = new List<TriggerData>();
+            public List<TriggerData> TunnelTriggers = new();
 
             public StoredTunnelData Save()
             {
@@ -4993,18 +4900,13 @@ namespace Oxide.Plugins
             private Color? _color;
             public Color GetColor()
             {
-                if (_color == null)
-                {
-                    _color = ParseColor(Color, UnityEngine.Color.black);
-                }
-
+                _color ??= ParseColor(Color, UnityEngine.Color.black);
                 return (Color)_color;
             }
 
             private static Color ParseColor(string colorString, Color defaultColor)
             {
-                Color color;
-                return ColorUtility.TryParseHtmlString(colorString, out color)
+                return ColorUtility.TryParseHtmlString(colorString, out var color)
                     ? color
                     : defaultColor;
             }
@@ -5037,7 +4939,7 @@ namespace Oxide.Plugins
             public bool EnableMapTriggers = true;
 
             [JsonProperty("EnableTunnelTriggers")]
-            public Dictionary<string, bool> EnableTunnelTriggers = new Dictionary<string, bool>
+            public Dictionary<string, bool> EnableTunnelTriggers = new()
             {
                 [TunnelType.TrainStation.ToString()] = false,
                 [TunnelType.BarricadeTunnel.ToString()] = false,
@@ -5056,16 +4958,16 @@ namespace Oxide.Plugins
             [JsonProperty("ConductorOutfit")]
             public ItemInfo[] ConductorOutfit =
             {
-                new ItemInfo { ShortName = "jumpsuit.suit" },
-                new ItemInfo { ShortName = "sunglasses03chrome" },
-                new ItemInfo { ShortName = "hat.boonie" },
+                new() { ShortName = "jumpsuit.suit" },
+                new() { ShortName = "sunglasses03chrome" },
+                new() { ShortName = "hat.boonie" },
             };
 
             [JsonProperty("ColoredMapMarker")]
-            public GenericMarkerOptions GenericMapMarker = new GenericMarkerOptions();
+            public GenericMarkerOptions GenericMapMarker = new();
 
             [JsonProperty("VendingMapMarker")]
-            public VendingMarkerOptions VendingMapMarker = new VendingMarkerOptions();
+            public VendingMarkerOptions VendingMapMarker = new();
 
             [JsonProperty("MapMarkerUpdateInveralSeconds")]
             private float DeprecatedMapMarkerUpdateIntervalSeconds { set => MapMarkerUpdateIntervalSeconds = value; }
@@ -5078,8 +4980,7 @@ namespace Oxide.Plugins
 
             public bool IsTunnelTypeEnabled(TunnelType tunnelType)
             {
-                bool enabled;
-                return EnableTunnelTriggers.TryGetValue(tunnelType.ToString(), out enabled) && enabled;
+                return EnableTunnelTriggers.TryGetValue(tunnelType.ToString(), out var enabled) && enabled;
             }
 
             private EngineSpeeds? _defaultSpeed;
@@ -5088,8 +4989,7 @@ namespace Oxide.Plugins
                 if (_defaultSpeed != null)
                     return (EngineSpeeds)_defaultSpeed;
 
-                EngineSpeeds engineSpeed;
-                if (TryParseEngineSpeed(DefaultSpeed, out engineSpeed))
+                if (TryParseEngineSpeed(DefaultSpeed, out var engineSpeed))
                 {
                     _defaultSpeed = engineSpeed;
                     return engineSpeed;
@@ -5104,8 +5004,7 @@ namespace Oxide.Plugins
                 if (_defaultTrackSelection != null)
                     return (TrackSelection)_defaultTrackSelection;
 
-                TrackSelection trackSelection;
-                if (TryParseTrackSelection(DefaultTrackSelection, out trackSelection))
+                if (TryParseTrackSelection(DefaultTrackSelection, out var trackSelection))
                 {
                     _defaultTrackSelection = trackSelection;
                     return trackSelection;
@@ -5115,7 +5014,7 @@ namespace Oxide.Plugins
             }
         }
 
-        private Configuration GetDefaultConfig() => new Configuration();
+        private Configuration GetDefaultConfig() => new();
 
         #endregion
 
@@ -5163,13 +5062,10 @@ namespace Oxide.Plugins
 
             foreach (var key in currentWithDefaults.Keys)
             {
-                object currentRawValue;
-                if (currentRaw.TryGetValue(key, out currentRawValue))
+                if (currentRaw.TryGetValue(key, out var currentRawValue))
                 {
-                    var defaultDictValue = currentWithDefaults[key] as Dictionary<string, object>;
                     var currentDictValue = currentRawValue as Dictionary<string, object>;
-
-                    if (defaultDictValue != null)
+                    if (currentWithDefaults[key] is Dictionary<string, object> defaultDictValue)
                     {
                         if (currentDictValue == null)
                         {
