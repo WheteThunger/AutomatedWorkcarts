@@ -4136,23 +4136,42 @@ namespace Oxide.Plugins
 
             private void HandleEntityCollision(BaseEntity entity)
             {
-                var trainCar = entity as TrainCar;
-                if ((object)trainCar != null)
+                switch (entity)
                 {
-                    HandleTrainCar(trainCar);
-                }
-
-                if (entity is JunkPile or LootContainer)
-                {
-                    var entity2 = entity;
-                    entity.Invoke(() =>
+                    case TrainCar trainCar:
                     {
-                        if (entity2.IsDestroyed)
-                            return;
+                        HandleTrainCar(trainCar);
+                        break;
+                    }
+                    case TrainBarricade:
+                    {
+                        if (_config.DestroyBarricadesInstantly)
+                        {
+                            var entity2 = entity;
+                            entity.Invoke(() =>
+                            {
+                                if (entity2.IsDestroyed)
+                                    return;
 
-                        entity2.Kill();
-                        LogWarning($"Automated train destroyed entity '{entity2.ShortPrefabName}' in its path at {transform.position}.");
-                    }, 0);
+                                entity2.Kill();
+                            }, 0);
+                        }
+
+                        break;
+                    }
+                    case JunkPile or LootContainer:
+                    {
+                        var entity2 = entity;
+                        entity.Invoke(() =>
+                        {
+                            if (entity2.IsDestroyed)
+                                return;
+
+                            entity2.Kill();
+                            LogWarning($"Automated train destroyed entity '{entity2.ShortPrefabName}' in its path at {transform.position}.");
+                        }, 0);
+                        break;
+                    }
                 }
             }
 
@@ -4934,6 +4953,9 @@ namespace Oxide.Plugins
 
             [JsonProperty("BulldozeOffendingWorkcarts")]
             public bool BulldozeOffendingWorkcarts = false;
+
+            [JsonProperty("DestroyBarricadesInstantly")]
+            public bool DestroyBarricadesInstantly = false;
 
             [JsonProperty("EnableMapTriggers")]
             public bool EnableMapTriggers = true;

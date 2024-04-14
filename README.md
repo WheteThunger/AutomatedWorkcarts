@@ -204,6 +204,7 @@ Default configuration:
   "DefaultSpeed": "Fwd_Hi",
   "DefaultTrackSelection": "Left",
   "BulldozeOffendingWorkcarts": false,
+  "DestroyBarricadesInstantly": false,
   "EnableMapTriggers": true,
   "EnableTunnelTriggers": {
     "TrainStation": false,
@@ -252,6 +253,7 @@ Default configuration:
   - Allowed values: `"Left"` | `"Default"` | `"Right"`.
   - This value is ignored if the train is on a trigger that specifies track selection.
 - `BulldozeOffendingWorkcarts` (`true` or `false`) -- While `true`, automated trains will destroy other non-automated trains in their path.
+- `DestroyBarricadesInstantly` (`true` or `false`) -- While `true`, automated trains will destroy train barricades instantly, though the train may still slow down.
   - Regardless of this setting, automated trains may destroy each other in head-on or perpendicular collisions.
 - `EnableMapTriggers` (`true` or `false`) -- While `false`, existing map-specific triggers will be disabled, and no new map-specific triggers can be added.
 - `EnableTunnelTriggers` -- While `false` for a particular tunnel type, existing triggers in those tunnels will be disabled, and no new triggers can be added to tunnels of that type.
