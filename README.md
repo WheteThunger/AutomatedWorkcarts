@@ -123,12 +123,13 @@ Note: If the train is destroyed, it will be respawned up to 30 seconds later. At
   - Track selection options: `Default` | `Left` | `Right` | `Swap`.
   - Train car options: `Locomotive` | `Sedan` | `Workcart` | `WorkcartCovered` | `WagonA` | `WagonB` | `WagonC` | `WagonFuel` | `WagonLoot` | `WagonResource` | `Caboose`
   - Other options:
-    - `Conductor` -- Adds a conductor to the train if not already present. A good place to put `Conductor` triggers is on workcart spawn locations, such as the vanilla spawns in the underground maintenance tunnels. This option can also be combined with the `Spawn` option to automatically spawn an automated train.
+    - `Conductor` -- Adds a conductor to the train if not already present. A good place to put `Conductor` triggers is on workcart spawn locations, such as the vanilla spawns in the underground maintenance tunnels. This option can also be combined with the train car options to automatically spawn an automated train.
       - Note: Player-owned trains cannot receive conductors. Vanilla trains don't have owners, but most plugins that spawn vehicles for players will assign ownership by setting the `OwnerID` property of the vehicle.
     - `Brake` -- Instructs the train to brake until it reaches the designated speed. For example, if the train is going `Fwd_Hi` and enters a `Brake Med` trigger, it will temporarily go `Rev_Lo` until it slows down enough, then it will go `Fwd_Med`.
     - `Destroy` -- Destroys the train. This is intended primarily for testing and demonstrations, but it's also useful if you don't want to be bothered to make a more thoughtful track design.
     - `@<route_name>` -- Instructs the train to ignore this trigger if it's not assigned this route (replace `<route_name>` with the name you want).
       - If the trigger has the `Conductor` property and the train does not already have a conductor, it will be assigned this route.
+    - `<chance>%` -- Makes the trigger have only a percent chance to affect a train. Does not affect the chance of a train receiving a conductor.
     - `Enabled` -- Enables the trigger.
     - `Disabled` -- Disables the trigger. Disabled triggers are ignored by trains and are colored gray.
 - `aw.addtrunneltrigger <option1> <option2>` (alias: `awt.addt`) -- Adds a trigger to the track position where you are aiming.

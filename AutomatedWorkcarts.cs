@@ -860,6 +860,12 @@ namespace Oxide.Plugins
                 return true;
             }
 
+            if (arg[^1] == '%' && float.TryParse(arg[..^1], out var percentage))
+            {
+                triggerData.Chance = Mathf.Clamp(percentage / 100f, 0, 1);
+                return true;
+            }
+
             if (float.TryParse(arg, out var stopDuration))
             {
                 triggerData.StopDuration = stopDuration;
@@ -2082,6 +2088,9 @@ namespace Oxide.Plugins
             [JsonProperty("DepartureSpeed", DefaultValueHandling = DefaultValueHandling.Ignore)]
             public string DepartureSpeed;
 
+            [JsonProperty("Chance", DefaultValueHandling = DefaultValueHandling.Ignore)]
+            public float Chance;
+
             [JsonProperty("Commands", DefaultValueHandling = DefaultValueHandling.Ignore)]
             public List<string> Commands;
 
@@ -2120,6 +2129,11 @@ namespace Oxide.Plugins
 
             [JsonIgnore]
             public TrainTriggerType TriggerType => TunnelType != null ? TrainTriggerType.Tunnel : TrainTriggerType.Map;
+
+            public float GetChance()
+            {
+                return Mathf.Clamp(Chance, 0, 1);
+            }
 
             public float GetStopDuration()
             {
@@ -2240,6 +2254,7 @@ namespace Oxide.Plugins
                 Direction = triggerData.Direction;
                 TrackSelection = triggerData.TrackSelection;
                 StopDuration = triggerData.StopDuration;
+                Chance = triggerData.Chance;
                 TrainCars = triggerData.TrainCars;
                 Commands = triggerData.Commands;
             }
@@ -3215,6 +3230,11 @@ namespace Oxide.Plugins
                         infoLines.Add(_plugin.GetMessage(player, Lang.InfoTriggerAddConductor));
                     }
 
+                    if (triggerData.Chance != 0)
+                    {
+                        infoLines.Add(_plugin.GetMessage(player, Lang.InfoTriggerChance, triggerData.GetChance() * 100));
+                    }
+
                     var directionInstruction = triggerData.GetDirectionInstruction();
                     var speedInstruction = triggerData.GetSpeedInstruction();
 
@@ -3796,6 +3816,10 @@ namespace Oxide.Plugins
             public void HandleTrigger(TriggerData triggerData)
             {
                 if (!triggerData.MatchesRoute(_trainEngineData.Route))
+                    return;
+
+                var chance = triggerData.GetChance();
+                if (chance != 0 && UnityEngine.Random.Range(0f, 1f) >= chance)
                     return;
 
                 if (triggerData.Commands is { Count: > 0 })
@@ -5254,6 +5278,7 @@ namespace Oxide.Plugins
             public const string InfoTriggerAddConductor = "Info.Trigger.Conductor";
             public const string InfoTriggerDestroy = "Info.Trigger.Destroy";
             public const string InfoTriggerStopDuration = "Info.Trigger.StopDuration";
+            public const string InfoTriggerChance = "Info.Trigger.Chance";
 
             public const string InfoTriggerSpeed = "Info.Trigger.Speed";
             public const string InfoTriggerBrakeToSpeed = "Info.Trigger.BrakeToSpeed";
@@ -5326,6 +5351,7 @@ namespace Oxide.Plugins
                 [Lang.InfoTriggerAddConductor] = "Adds Conductor",
                 [Lang.InfoTriggerDestroy] = "Destroys workcart",
                 [Lang.InfoTriggerStopDuration] = "Stop duration: {0}s",
+                [Lang.InfoTriggerChance] = "Chance: {0}%",
 
                 [Lang.InfoTriggerSpeed] = "Speed: {0}",
                 [Lang.InfoTriggerBrakeToSpeed] = "Brake to speed: {0}",
@@ -5397,6 +5423,7 @@ namespace Oxide.Plugins
                 [Lang.InfoTriggerAddConductor] = "Adiciona Condutor",
                 [Lang.InfoTriggerDestroy] = "Destrói o carrinho de trabalho",
                 [Lang.InfoTriggerStopDuration] = "Duração da parada: {0}s",
+                [Lang.InfoTriggerChance] = "Chance: {0}%",
 
                 [Lang.InfoTriggerSpeed] = "Velocidade: {0}",
                 [Lang.InfoTriggerBrakeToSpeed] = "Freie para aumentar a velocidade: {0}",
