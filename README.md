@@ -217,6 +217,7 @@ Default configuration:
   },
   "MaxConductors": -1,
   "SpawnTriggersRespectConductorLimit": false,
+  "DisableDefaultTunnelWorkcartSpawnPoints": false,
   "ConductorOutfit": [
     {
       "ShortName": "jumpsuit.suit",
@@ -265,6 +266,7 @@ Default configuration:
   - `LargeIntersection` (`true` or `false`) -- This affects 4-way intersections.
 - `MaxConductors` -- The maximum number of automated trains allowed on the map at once. Set to `-1` for no limit. Note that having multiple automated workcarts on a single train will count as only one conductor. **Exception:** Trains spawned by conductor triggers are not subject to the conductor limit, nor do they count toward the conductor limit, unless `SpawnTriggersRespectConductorLimit` is set to `true`.
 - `SpawnTriggersRespectConductorLimit` (`true` or `false`) -- While `true`, trains spawned by conductor triggers are subject to the conductor limit.
+- `DisableDefaultTunnelWorkcartSpawnPoints` (`true` or `false`) -- While `true`, vanilla workcart spawn points at train station maintenance tunnels will be disabled, and any existing workcarts spawned by those spawn points will be destroyed when the plugin loads. This enables you to create custom spawn points in the same location, allowing you to use alternative train engines plus optional wagons.
 - `ConductorOutfit` -- Items to use for the outfit of each conductor.
 - `ColoredMapMarker`
   - `Enabled` (`true` or `false`) -- Whether to enable colored map markers. Enabling this has a performance cost.

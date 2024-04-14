@@ -52,6 +52,7 @@ namespace Oxide.Plugins
         private StoredMapData _mapData;
 
         private readonly SpawnedTrainCarTracker _spawnedTrainCarTracker = new();
+        private readonly DisableSpawnPointManager _disableSpawnPointManager = new();
         private readonly TriggerManager _triggerManager;
         private readonly TrainManager _trainManager;
 
@@ -84,7 +85,7 @@ namespace Oxide.Plugins
         private void OnServerInitialized()
         {
             _mapData = StoredMapData.Load();
-            _startupCoroutine = ServerMgr.Instance.StartCoroutine(DoStartupRoutine());
+            _startupCoroutine = ServerMgr.Instance.StartCoroutine(new TrackedCoroutine(this).WithEnumerator(DoStartupRoutine()));
         }
 
         private void Unload()
@@ -97,6 +98,7 @@ namespace Oxide.Plugins
             OnServerSave();
             _triggerManager.DestroyAll();
             _trainManager.Unload();
+            _disableSpawnPointManager.Unload();
         }
 
         private void OnServerSave()
@@ -1005,8 +1007,10 @@ namespace Oxide.Plugins
 
         private IEnumerator DoStartupRoutine()
         {
+            if (_config.DisableDefaultTunnelWorkcartSpawnPoints)
+                yield return _disableSpawnPointManager.DisableSpawnPointsRoutine();
+
             yield return _triggerManager.CreateAll();
-            TrackStart();
 
             var foundTrainEngineIds = new HashSet<ulong>();
             foreach (var entity in BaseNetworkable.serverEntities)
@@ -1036,7 +1040,6 @@ namespace Oxide.Plugins
             }
 
             _data.TrimToTrainEngineIds(foundTrainEngineIds);
-            TrackEnd();
         }
 
         private bool AutomationWasBlocked(TrainEngine trainEngine)
@@ -1559,6 +1562,63 @@ namespace Oxide.Plugins
 
         #endregion
 
+        #region Utilities
+
+        private class TrackedCoroutine : IEnumerator
+        {
+            private readonly Plugin _plugin;
+            private IEnumerator _inner;
+
+            public TrackedCoroutine(Plugin plugin, IEnumerator inner = null)
+            {
+                _plugin = plugin;
+                _inner = inner;
+            }
+
+            public object Current
+            {
+                get
+                {
+                    return _inner.Current switch
+                    {
+                        TrackedCoroutine => _inner.Current,
+                        IEnumerator enumerator => new TrackedCoroutine(_plugin).WithEnumerator(enumerator),
+                        _ => _inner.Current,
+                    };
+                }
+            }
+
+            public bool MoveNext()
+            {
+                bool result;
+                _plugin.TrackStart();
+
+                try
+                {
+                    result = _inner.MoveNext();
+                }
+                finally
+                {
+                    _plugin.TrackEnd();
+                }
+
+                return result;
+            }
+
+            public void Reset()
+            {
+                throw new NotImplementedException();
+            }
+
+            public TrackedCoroutine WithEnumerator(IEnumerator inner)
+            {
+                _inner = inner;
+                return this;
+            }
+        }
+
+        #endregion
+
         #region Train Car Prefabs
 
         private class TrainCarPrefab
@@ -1626,6 +1686,56 @@ namespace Oxide.Plugins
                 TrainCarAlias = trainCarAlias;
                 PrefabPath = prefabPath;
                 Reverse = reverse;
+            }
+        }
+
+        #endregion
+
+        #region Disable Spawn Point Manager
+
+        private class DisableSpawnPointManager
+        {
+            private Dictionary<SpawnGroup, int> _disabledSpawnGroups = new();
+
+            public IEnumerator DisableSpawnPointsRoutine()
+            {
+                foreach (var dungeonCell in TerrainMeta.Path.DungeonGridCells)
+                {
+                    if (DungeonCellWrapper.GetTunnelType(dungeonCell) != TunnelType.TrainStation)
+                        continue;
+
+                    var spawnGroupList = dungeonCell.GetComponentsInChildren<SpawnGroup>();
+                    if (spawnGroupList.Length != 0)
+                    {
+                        foreach (var spawnGroup in spawnGroupList)
+                        {
+                            foreach (var spawnEntry in spawnGroup.prefabs)
+                            {
+                                if (spawnEntry.prefab.Get()?.GetComponent<TrainEngine>() == null)
+                                    continue;
+
+                                _disabledSpawnGroups[spawnGroup] = spawnGroup.maxPopulation;
+                                spawnGroup.maxPopulation = 0;
+
+                                for (var i = spawnGroup.spawnInstances.Count - 1; i >= 0; i--)
+                                {
+                                    spawnGroup.spawnInstances[i].GetComponent<TrainEngine>()?.Kill();
+                                    yield return null;
+                                }
+                            }
+                        }
+                    }
+
+                    yield return null;
+                }
+            }
+
+            public void Unload()
+            {
+                foreach (var (spawnGroup, maxPopulation) in _disabledSpawnGroups)
+                {
+                    spawnGroup.maxPopulation = maxPopulation;
+                }
             }
         }
 
@@ -3054,9 +3164,7 @@ namespace Oxide.Plugins
                     foreach (var triggerData in _mapData.MapTriggers)
                     {
                         CreateMapTriggerController(triggerData);
-                        _plugin.TrackEnd();
-                        yield return CoroutineEx.waitForEndOfFrame;
-                        _plugin.TrackStart();
+                        yield return null;
                     }
                 }
 
@@ -3067,9 +3175,7 @@ namespace Oxide.Plugins
                         continue;
 
                     CreateTunnelTriggerController(triggerData);
-                    _plugin.TrackEnd();
-                    yield return CoroutineEx.waitForEndOfFrame;
-                    _plugin.TrackStart();
+                    yield return null;
                 }
             }
 
@@ -5000,6 +5106,9 @@ namespace Oxide.Plugins
 
             [JsonProperty("SpawnTriggersRespectConductorLimit")]
             public bool SpawnTriggersRespectConductorLimit = false;
+
+            [JsonProperty("DisableDefaultTunnelWorkcartSpawnPoints")]
+            public bool DisableDefaultTunnelWorkcartSpawnPoints = false;
 
             [JsonProperty("ConductorOutfit")]
             public ItemInfo[] ConductorOutfit =
