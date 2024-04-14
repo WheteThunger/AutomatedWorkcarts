@@ -214,6 +214,7 @@ Default configuration:
     "VerticalIntersection": false
   },
   "MaxConductors": -1,
+  "SpawnTriggersRespectConductorLimit": false,
   "ConductorOutfit": [
     {
       "ShortName": "jumpsuit.suit",
@@ -259,7 +260,8 @@ Default configuration:
   - `LootTunnel` (`true` or `false`) -- This affects straight tunnels that spawn NPCs and loot.
   - `Intersection` (`true` or `false`) -- This affects 3-way intersections.
   - `LargeIntersection` (`true` or `false`) -- This affects 4-way intersections.
-- `MaxConductors` -- The maximum number of automated trains allowed on the map at once. Set to `-1` for no limit. Note that having multiple automated workcarts on a single train will count as only one conductor. **Exception:** Trains spawned by conductor triggers are not subject to the conductor limit, nor do they count toward the conductor limit. This exception is intentional because it allows you to force specific trains to always have conductors while limiting the conductors in other areas.
+- `MaxConductors` -- The maximum number of automated trains allowed on the map at once. Set to `-1` for no limit. Note that having multiple automated workcarts on a single train will count as only one conductor. **Exception:** Trains spawned by conductor triggers are not subject to the conductor limit, nor do they count toward the conductor limit, unless `SpawnTriggersRespectConductorLimit` is set to `true`.
+- `SpawnTriggersRespectConductorLimit` (`true` or `false`) -- While `true`, trains spawned by conductor triggers are subject to the conductor limit.
 - `ConductorOutfit` -- Items to use for the outfit of each conductor.
 - `ColoredMapMarker`
   - `Enabled` (`true` or `false`) -- Whether to enable colored map markers. Enabling this has a performance cost.

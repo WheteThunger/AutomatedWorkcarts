@@ -2035,6 +2035,26 @@ namespace Oxide.Plugins
                 _plugin.TrackEnd();
             }
 
+            private bool ShouldAutomateTrain(TrainCar trainCar, out bool shouldCount)
+            {
+                shouldCount = true;
+
+                if (TriggerData.IsSpawner)
+                {
+                    // Hybrid Spawner/Conductor triggers should only automate trains spawned by the same trigger.
+                    if (!_triggerInstance.DidSpawnTrain(trainCar))
+                        return false;
+
+                    // Trains spawned by hybrid Spawner/Conductor triggers may be exempt from conductor limits.
+                    shouldCount = _plugin._config.SpawnTriggersRespectConductorLimit;
+                    if (!shouldCount)
+                        return true;
+                }
+
+                // Don't add a conductor if the limit is reached, unless the train was spawned by this trigger.
+                return _trainManager.CanHaveMoreConductors();
+            }
+
             private void HandleTrainCar(TrainCar trainCar)
             {
                 if (entityContents == null)
@@ -2067,20 +2087,10 @@ namespace Oxide.Plugins
                     if (IsTrainOwned(trainCar))
                         return;
 
-                    var spawnedByThisTrigger = _triggerInstance.DidSpawnTrain(trainCar);
-                    if (!spawnedByThisTrigger)
-                    {
-                        // Spawner/Conductor triggers should only automate trains spawned by the same trigger.
-                        if (TriggerData.IsSpawner)
-                            return;
+                    if (!ShouldAutomateTrain(trainCar, out var shouldCount))
+                        return;
 
-                        // Don't add a conductor if the limit is reached, unless the train was spawned by this trigger.
-                        if (!_trainManager.CanHaveMoreConductors())
-                            return;
-                    }
-
-                    // The train is exempt from conductor limits if it was spawned by this trigger.
-                    _trainManager.TryCreateTrainController(leadTrainEngine, TriggerData, countsTowardConductorLimit: !spawnedByThisTrigger);
+                    _trainManager.TryCreateTrainController(leadTrainEngine, TriggerData, countsTowardConductorLimit: shouldCount);
                     return;
                 }
 
@@ -5039,6 +5049,9 @@ namespace Oxide.Plugins
 
             [JsonProperty("MaxConductors")]
             public int MaxConductors = -1;
+
+            [JsonProperty("SpawnTriggersRespectConductorLimit")]
+            public bool SpawnTriggersRespectConductorLimit = false;
 
             [JsonProperty("ConductorOutfit")]
             public ItemInfo[] ConductorOutfit =
