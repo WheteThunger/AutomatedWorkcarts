@@ -3601,31 +3601,69 @@ namespace Oxide.Plugins
 
         private abstract class TrainState
         {
-            public EngineSpeeds NextThrottle;
-
             protected TrainController _trainController;
 
             public abstract void Enter();
             public abstract void Exit();
 
-            protected TrainState(TrainController trainController, EngineSpeeds nextThrottle)
+            protected TrainState(TrainController trainController)
             {
                 _trainController = trainController;
-                NextThrottle = nextThrottle;
             }
         }
 
-        private class BrakingState : TrainState
+        private class DrivingState : TrainState
         {
-            public bool IsStopping => _stopDuration.HasValue;
+            public EngineSpeeds Throttle;
 
-            private float? _stopDuration;
-            private EngineSpeeds _targetSpeed => IsStopping ? EngineSpeeds.Zero : NextThrottle;
-
-            public BrakingState(TrainController trainController, EngineSpeeds nextThrottle, float? stopDuration = null)
-                : base(trainController, nextThrottle)
+            public DrivingState(TrainController trainController, EngineSpeeds throttle) : base(trainController)
             {
-                _stopDuration = stopDuration;
+                Throttle = throttle;
+            }
+
+            public override void Enter()
+            {
+                _trainController.SetThrottle(Throttle);
+            }
+
+            public override void Exit() {}
+        }
+
+        private abstract class TransitionState : TrainState
+        {
+            public readonly TrainState NextState;
+
+            protected TransitionState(TrainController trainController, TrainState nextState) : base(trainController)
+            {
+                _trainController = trainController;
+                NextState = nextState;
+            }
+
+            public T GetNextStateOfType<T>() where T : TrainState
+            {
+                return NextState as T ?? (NextState as TransitionState)?.GetNextStateOfType<T>();
+            }
+
+            public void SwitchToNextStateOfType<T>() where T : TrainState
+            {
+                _trainController.SwitchState(GetNextStateOfType<T>());
+            }
+
+            protected void SwitchToNextState()
+            {
+                _trainController.SwitchState(NextState);
+            }
+        }
+
+        private class BrakingState : TransitionState
+        {
+            public EngineSpeeds TargetThrottle;
+            public bool IsStopping => TargetThrottle == EngineSpeeds.Zero;
+
+            public BrakingState(TrainController trainController, TrainState nextState, EngineSpeeds targetThrottle)
+                : base(trainController, nextState)
+            {
+                TargetThrottle = targetThrottle;
             }
 
             public override void Enter()
@@ -3638,7 +3676,6 @@ namespace Oxide.Plugins
             public override void Exit()
             {
                 _trainController.PrimaryTrainEngineController.CancelInvokeFixedTime(BrakeUpdate);
-                _trainController.SetThrottle(NextThrottle);
             }
 
             private bool IsNearSpeed(EngineSpeeds desiredThrottle, float leeway = 0.1f)
@@ -3658,65 +3695,44 @@ namespace Oxide.Plugins
 
             private void BrakeUpdate()
             {
-                if (IsNearSpeed(_targetSpeed))
+                if (IsNearSpeed(TargetThrottle))
                 {
-                    _trainController.SwitchState(_stopDuration.HasValue
-                        ? new StoppedState(_trainController, NextThrottle, _stopDuration.Value)
-                        : null);
+                    SwitchToNextState();
                 }
             }
         }
 
-        private class StoppedState : TrainState
+        private class IdleState : TransitionState
         {
-            private float _stopDuration;
+            private readonly float _idleSeconds;
+            private readonly bool _reducePressureOnDeparture;
 
-            public StoppedState(TrainController trainController, EngineSpeeds departureVelocity, float duration)
-                : base(trainController, departureVelocity)
+            public IdleState(TrainController trainController, TrainState nextState, float idleSeconds, bool reducePressureOnDeparture = true)
+                : base(trainController, nextState)
             {
-                _stopDuration = duration;
+                _idleSeconds = idleSeconds;
+                _reducePressureOnDeparture = reducePressureOnDeparture;
             }
 
             public override void Enter()
             {
                 _trainController.SetThrottle(EngineSpeeds.Zero);
-                _trainController.PrimaryTrainEngineController.Invoke(DepartFromStop, _stopDuration);
+                _trainController.PrimaryTrainEngineController.Invoke(StopIdling, _idleSeconds);
             }
 
             public override void Exit()
             {
-                _trainController.PrimaryTrainEngineController.CancelInvoke(DepartFromStop);
-                _trainController.SetThrottle(NextThrottle);
+                _trainController.PrimaryTrainEngineController.CancelInvoke(StopIdling);
             }
 
-            private void DepartFromStop()
+            private void StopIdling()
             {
-                _trainController.SwitchState(null);
-            }
-        }
+                if (_reducePressureOnDeparture)
+                {
+                    _trainController.ReducePressure();
+                }
 
-        private class ChillingState : TrainState
-        {
-            private const float ChillDuration = 3f;
-
-            public ChillingState(TrainController trainController, EngineSpeeds nextThrottle)
-                : base(trainController, nextThrottle) {}
-
-            public override void Enter()
-            {
-                _trainController.SetThrottle(EngineSpeeds.Zero);
-                _trainController.PrimaryTrainEngineController.Invoke(StopChilling, ChillDuration);
-            }
-
-            public override void Exit()
-            {
-                _trainController.PrimaryTrainEngineController.CancelInvoke(StopChilling);
-                _trainController.SetThrottle(NextThrottle);
-            }
-
-            private void StopChilling()
-            {
-                _trainController.SwitchState(null);
+                SwitchToNextState();
             }
         }
 
@@ -3726,6 +3742,9 @@ namespace Oxide.Plugins
 
         private class TrainController
         {
+            private const float MaxBackPressure = 15f;
+            private const float BackPressureIncrement = 3f;
+
             public TrainManager TrainManager { get; }
             public TrainEngineController PrimaryTrainEngineController { get; private set; }
             public bool IsDestroying { get; private set; }
@@ -3737,10 +3756,13 @@ namespace Oxide.Plugins
                 ? PrimaryTrainEngine.transform.forward
                 : -PrimaryTrainEngine.transform.forward;
 
-            private bool IsStopped => _trainState is StoppedState;
+            private bool IsStopped => _trainState is IdleState;
             private bool IsStopping => (_trainState as BrakingState)?.IsStopping ?? false;
 
             private SpawnedTrainCarTracker _spawnedTrainCarTracker => TrainManager.SpawnedTrainCarTracker;
+
+            private DrivingState _nextDrivingState =>
+                _trainState as DrivingState ?? (_trainState as TransitionState)?.GetNextStateOfType<DrivingState>();
 
             private AutomatedWorkcarts _plugin;
             private readonly List<TrainEngineController> _trainEngineControllers = new List<TrainEngineController>();
@@ -3754,17 +3776,18 @@ namespace Oxide.Plugins
             private TrainCollisionTrigger _collisionTriggerB;
             private MapMarkerGenericRadius _genericMarker;
             private VendingMachineMapMarker _vendingMarker;
+            private float _backPressure;
             private bool _isDestroyed;
+
+            // Desired velocity, ignoring circumstances like stopping/braking/chilling.
+            public EngineSpeeds DepartureThrottle =>
+                _nextDrivingState?.Throttle ?? PrimaryTrainEngine.CurThrottleSetting;
 
             public void ScheduleCinematicDestruction()
             {
                 IsDestroying = true;
                 PrimaryTrainEngineController.Invoke(DestroyCinematically, 0);
             }
-
-            // Desired velocity, ignoring circumstances like stopping/braking/chilling.
-            public EngineSpeeds DepartureThrottle =>
-                _trainState?.NextThrottle ?? PrimaryTrainEngine.CurThrottleSetting;
 
             public TrainController(AutomatedWorkcarts plugin, TrainManager trainManager, TrainEngineData workcartData, bool countsTowardConductorLimit)
             {
@@ -3822,7 +3845,7 @@ namespace Oxide.Plugins
                     throttle = _config.GetDefaultSpeed();
                 }
 
-                SetThrottle(throttle);
+                SwitchState(new DrivingState(this, throttle));
                 SetTrackSelection(_trainEngineData.TrackSelection ?? _config.GetDefaultTrackSelection());
 
                 if (_config.PlayHornForNearbyPlayersInRadius > 0)
@@ -3895,29 +3918,41 @@ namespace Oxide.Plugins
                     var brakeSpeedInstruction = triggerData.GetSpeedInstructionOrZero();
                     if (brakeSpeedInstruction == SpeedInstruction.Zero)
                     {
-                        SwitchState(new BrakingState(this, newDepartureThrottle, triggerData.GetStopDuration()));
+                        var finalState = new DrivingState(this, newDepartureThrottle);
+                        var nextState = new IdleState(this, finalState, triggerData.GetStopDuration());
+                        SwitchState(new BrakingState(this, nextState, EngineSpeeds.Zero));
                         return;
                     }
 
                     var brakeUntilVelocity = ApplySpeedAndDirection(currentDepartureThrottle, brakeSpeedInstruction, directionInstruction);
-                    SwitchState(new BrakingState(this, brakeUntilVelocity));
+                    SwitchState(new BrakingState(this, new DrivingState(this, brakeUntilVelocity), brakeUntilVelocity));
                     return;
                 }
 
                 var speedInstruction = triggerData.GetSpeedInstruction();
                 if (speedInstruction == SpeedInstruction.Zero)
                 {
+                    if (_trainState is BrakingState brakingState)
+                    {
+                        // Update brake-to speed.
+                        brakingState.TargetThrottle = EngineSpeeds.Zero;
+                        return;
+                    }
+
                     // Trigger with speed Zero, but no braking.
-                    SwitchState(new StoppedState(this, newDepartureThrottle, triggerData.GetStopDuration()));
+                    SwitchState(new IdleState(this, new DrivingState(this, newDepartureThrottle), triggerData.GetStopDuration()));
                     return;
                 }
 
                 var nextThrottle = ApplySpeedAndDirection(currentDepartureThrottle, speedInstruction, directionInstruction);
-                if (_trainState != null)
+
+                if (_trainState is DrivingState drivingState)
                 {
-                    // Update brake-to speed, departure speed, or post-chill speed.
-                    _trainState.NextThrottle = nextThrottle;
-                    return;
+                    drivingState.Throttle = nextThrottle;
+                }
+                else
+                {
+                    SwitchState(new DrivingState(this, nextThrottle));
                 }
 
                 SetThrottle(nextThrottle);
@@ -3931,14 +3966,23 @@ namespace Oxide.Plugins
                 }
             }
 
-            public void StartChilling()
+            public void StartChilling(TrainController forwardController = null)
             {
-                SwitchState(new ChillingState(this, DepartureThrottle));
+                if (_trainState is IdleState)
+                    return;
+
+                _backPressure = Math.Min((forwardController?._backPressure ?? 0) + BackPressureIncrement, MaxBackPressure);
+                SwitchState(new IdleState(this, _trainState, _backPressure, reducePressureOnDeparture: false));
+            }
+
+            public void ReducePressure()
+            {
+                _backPressure = Math.Max(_backPressure - BackPressureIncrement, 0);
             }
 
             public void DepartEarlyIfStoppedOrStopping()
             {
-                SwitchState(null);
+                (_trainState as TransitionState)?.SwitchToNextStateOfType<DrivingState>();
             }
 
             public void SwitchState(TrainState nextState)
@@ -4232,7 +4276,7 @@ namespace Oxide.Plugins
                         return;
                     }
 
-                    backwardController?.StartChilling();
+                    backwardController?.StartChilling(forwardController);
                 }
                 else
                 {
@@ -4252,7 +4296,7 @@ namespace Oxide.Plugins
                         return;
                     }
 
-                    // Don't destroy both, since the collison event can happen for both trains in the same frame.
+                    // Don't destroy both, since the collision event can happen for both trains in the same frame.
                     if (TrainController.IsDestroying)
                         return;
 
