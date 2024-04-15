@@ -57,6 +57,7 @@ namespace Oxide.Plugins
         private readonly TrainManager _trainManager;
 
         private Coroutine _startupCoroutine;
+        private Timer _showStatesTimer;
 
         public AutomatedWorkcarts()
         {
@@ -579,7 +580,7 @@ namespace Oxide.Plugins
         }
 
         [Command("aw.showtriggers", "awt.show")]
-        private void CommandShowStops(IPlayer player, string cmd, string[] args)
+        private void CommandShowTriggers(IPlayer player, string cmd, string[] args)
         {
             if (player.IsServer
                 || !VerifyPermission(player, PermissionManageTriggers)
@@ -621,6 +622,38 @@ namespace Oxide.Plugins
             {
                 ReplyToPlayer(player, Lang.ShowTriggersSuccess, FormatTime(duration));
             }
+        }
+
+        // Debugging command, usable by one player at a time.
+        [Command("aw.showstates")]
+        private void CommandShowStates(IPlayer player, string cmd, string[] args)
+        {
+            if (player.IsServer
+                || !VerifyPermission(player, PermissionManageTriggers)
+                || !VerifyAnyTriggers(player))
+                return;
+
+            if (args.Length < 1 || !int.TryParse(args[0], out var duration))
+            {
+                duration = 60;
+            }
+
+            var drawDuration = 0.5f;
+            var maxDistanceSquared = Mathf.Pow(_config.TriggerDisplayDistance, 2);
+            var basePlayer = player.Object as BasePlayer;
+
+            _showStatesTimer?.Destroy();
+            _showStatesTimer = timer.Repeat(drawDuration, Mathf.RoundToInt(duration / drawDuration), () =>
+            {
+                if (basePlayer == null || basePlayer.IsDestroyed || !basePlayer.IsConnected)
+                {
+                    _showStatesTimer.Destroy();
+                    _showStatesTimer = null;
+                    return;
+                }
+
+                _trainManager.ShowNearbyTrainStates(basePlayer, maxDistanceSquared, drawDuration);
+            });
         }
 
         #endregion
@@ -3642,6 +3675,23 @@ namespace Oxide.Plugins
 
                 return changed;
             }
+
+            public void ShowNearbyTrainStates(BasePlayer player, float maxDistanceSquared, float duration)
+            {
+                var playerPosition = player.transform.position;
+
+                foreach (var trainController in _trainControllers)
+                {
+                    var primaryController = trainController.PrimaryTrainEngineController;
+                    var primaryTrainPosition = primaryController.transform.position;
+                    if ((playerPosition - primaryTrainPosition).sqrMagnitude > maxDistanceSquared)
+                        continue;
+
+                    var drawColor = trainController.TrainState?.Color ?? Color.grey;
+                    var drawPosition = primaryTrainPosition + Vector3.up;
+                    player.SendConsoleCommand("ddraw.text", duration, drawColor, drawPosition, trainController.ToString());
+                }
+            }
         }
 
         #endregion
@@ -3654,6 +3704,7 @@ namespace Oxide.Plugins
 
             public abstract void Enter();
             public abstract void Exit();
+            public abstract Color Color { get; }
 
             protected TrainState(TrainController trainController)
             {
@@ -3663,6 +3714,8 @@ namespace Oxide.Plugins
 
         private class DrivingState : TrainState
         {
+            public override Color Color => Color.green;
+
             public EngineSpeeds Throttle;
 
             public DrivingState(TrainController trainController, EngineSpeeds throttle) : base(trainController)
@@ -3676,11 +3729,18 @@ namespace Oxide.Plugins
             }
 
             public override void Exit() {}
+
+            public override string ToString()
+            {
+                return $"{nameof(DrivingState)}: {Throttle}";
+            }
         }
 
         private abstract class TransitionState : TrainState
         {
-            public readonly TrainState NextState;
+            public override Color Color => Color.grey;
+
+            protected readonly TrainState NextState;
 
             protected TransitionState(TrainController trainController, TrainState nextState) : base(trainController)
             {
@@ -3706,6 +3766,8 @@ namespace Oxide.Plugins
 
         private class BrakingState : TransitionState
         {
+            public override Color Color => Color.HSVToRGB(0.5f/6f, 1, 1);
+
             public EngineSpeeds TargetThrottle;
             public bool IsStopping => TargetThrottle == EngineSpeeds.Zero;
 
@@ -3749,18 +3811,27 @@ namespace Oxide.Plugins
                     SwitchToNextState();
                 }
             }
+
+            public override string ToString()
+            {
+                return $"{nameof(BrakingState)}: {TargetThrottle}\n{NextState}";
+            }
         }
 
         private class IdleState : TransitionState
         {
-            private readonly float _idleSeconds;
-            private readonly bool _reducePressureOnDeparture;
+            public override Color Color => _isIdleDueToCollision ? Color.red : Color.white;
 
-            public IdleState(TrainController trainController, TrainState nextState, float idleSeconds, bool reducePressureOnDeparture = true)
+            private readonly float _idleSeconds;
+            private readonly bool _isIdleDueToCollision;
+            private readonly bool _shouldReducePressure;
+
+            public IdleState(TrainController trainController, TrainState nextState, float idleSeconds, bool isIdleDueToCollision = false, bool shouldReducePressure = false)
                 : base(trainController, nextState)
             {
                 _idleSeconds = idleSeconds;
-                _reducePressureOnDeparture = reducePressureOnDeparture;
+                _isIdleDueToCollision = isIdleDueToCollision;
+                _shouldReducePressure = shouldReducePressure;
             }
 
             public override void Enter()
@@ -3776,12 +3847,17 @@ namespace Oxide.Plugins
 
             private void StopIdling()
             {
-                if (_reducePressureOnDeparture)
+                if (_shouldReducePressure)
                 {
                     _trainController.ReducePressure();
                 }
 
                 SwitchToNextState();
+            }
+
+            public override string ToString()
+            {
+                return $"{nameof(IdleState)}: {_idleSeconds}{(_isIdleDueToCollision ? "*" : "")}\n{NextState}";
             }
         }
 
@@ -3796,6 +3872,7 @@ namespace Oxide.Plugins
 
             public TrainManager TrainManager { get; }
             public TrainEngineController PrimaryTrainEngineController { get; private set; }
+            public TrainState TrainState { get; private set; }
             public bool IsDestroying { get; private set; }
             public bool CountsTowardConductorLimit { get; }
             public TrainEngine PrimaryTrainEngine => PrimaryTrainEngineController.TrainEngine;
@@ -3805,19 +3882,18 @@ namespace Oxide.Plugins
                 ? PrimaryTrainEngine.transform.forward
                 : -PrimaryTrainEngine.transform.forward;
 
-            private bool IsStopped => _trainState is IdleState;
-            private bool IsStopping => (_trainState as BrakingState)?.IsStopping ?? false;
+            private bool IsStopped => TrainState is IdleState;
+            private bool IsStopping => (TrainState as BrakingState)?.IsStopping ?? false;
 
             private SpawnedTrainCarTracker _spawnedTrainCarTracker => TrainManager.SpawnedTrainCarTracker;
 
             private DrivingState _nextDrivingState =>
-                _trainState as DrivingState ?? (_trainState as TransitionState)?.GetNextStateOfType<DrivingState>();
+                TrainState as DrivingState ?? (TrainState as TransitionState)?.GetNextStateOfType<DrivingState>();
 
             private AutomatedWorkcarts _plugin;
             private readonly List<TrainEngineController> _trainEngineControllers = new();
             private readonly List<ITrainCarComponent> _trainCarComponents = new();
 
-            private TrainState _trainState;
             private TrainEngineData _trainEngineData;
 
             private Func<BasePlayer, bool> _nearbyPlayerFilter;
@@ -3832,12 +3908,6 @@ namespace Oxide.Plugins
             public EngineSpeeds DepartureThrottle =>
                 _nextDrivingState?.Throttle ?? PrimaryTrainEngine.CurThrottleSetting;
 
-            public void ScheduleCinematicDestruction()
-            {
-                IsDestroying = true;
-                PrimaryTrainEngineController.Invoke(DestroyCinematically, 0);
-            }
-
             public TrainController(AutomatedWorkcarts plugin, TrainManager trainManager, TrainEngineData workcartData, bool countsTowardConductorLimit)
             {
                 _plugin = plugin;
@@ -3845,6 +3915,17 @@ namespace Oxide.Plugins
                 _trainEngineData = workcartData;
                 _nearbyPlayerFilter = NearbyPlayerFilter;
                 CountsTowardConductorLimit = countsTowardConductorLimit;
+            }
+
+            public override string ToString()
+            {
+                return $"{PrimaryTrainEngine.CurThrottleSetting} {PrimaryTrainEngine.localTrackSelection}\n{TrainState?.ToString() ?? "No state"}";
+            }
+
+            public void ScheduleCinematicDestruction()
+            {
+                IsDestroying = true;
+                PrimaryTrainEngineController.Invoke(DestroyCinematically, 0);
             }
 
             public void AddTrainCarComponent(ITrainCarComponent trainCarComponent)
@@ -3985,7 +4066,7 @@ namespace Oxide.Plugins
                 var speedInstruction = triggerData.GetSpeedInstruction();
                 if (speedInstruction == SpeedInstruction.Zero)
                 {
-                    if (_trainState is BrakingState brakingState)
+                    if (TrainState is BrakingState brakingState)
                     {
                         // Update brake-to speed.
                         brakingState.TargetThrottle = EngineSpeeds.Zero;
@@ -3993,13 +4074,13 @@ namespace Oxide.Plugins
                     }
 
                     // Trigger with speed Zero, but no braking.
-                    SwitchState(new IdleState(this, new DrivingState(this, newDepartureThrottle), triggerData.GetStopDuration()));
+                    SwitchState(new IdleState(this, new DrivingState(this, newDepartureThrottle), triggerData.GetStopDuration(), shouldReducePressure: true));
                     return;
                 }
 
                 var nextThrottle = ApplySpeedAndDirection(currentDepartureThrottle, speedInstruction, directionInstruction);
 
-                if (_trainState is DrivingState drivingState)
+                if (TrainState is DrivingState drivingState)
                 {
                     drivingState.Throttle = nextThrottle;
                 }
@@ -4021,11 +4102,11 @@ namespace Oxide.Plugins
 
             public void StartChilling(TrainController forwardController = null)
             {
-                if (_trainState is IdleState)
+                if (TrainState is IdleState)
                     return;
 
                 _backPressure = Math.Min((forwardController?._backPressure ?? 0) + BackPressureIncrement, MaxBackPressure);
-                SwitchState(new IdleState(this, _trainState, _backPressure, reducePressureOnDeparture: false));
+                SwitchState(new IdleState(this, TrainState, _backPressure, isIdleDueToCollision: true));
             }
 
             public void ReducePressure()
@@ -4035,13 +4116,13 @@ namespace Oxide.Plugins
 
             public void DepartEarlyIfStoppedOrStopping()
             {
-                (_trainState as TransitionState)?.SwitchToNextStateOfType<DrivingState>();
+                (TrainState as TransitionState)?.SwitchToNextStateOfType<DrivingState>();
             }
 
             public void SwitchState(TrainState nextState)
             {
-                _trainState?.Exit();
-                _trainState = nextState;
+                TrainState?.Exit();
+                TrainState = nextState;
                 nextState?.Enter();
             }
 
