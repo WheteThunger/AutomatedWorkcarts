@@ -36,6 +36,8 @@ namespace Oxide.Plugins
         private const string ShopkeeperPrefab = "assets/prefabs/npc/bandit/shopkeepers/bandit_shopkeeper.prefab";
         private const string GenericMapMarkerPrefab = "assets/prefabs/tools/map/genericradiusmarker.prefab";
         private const string VendingMapMarkerPrefab = "assets/prefabs/deployable/vendingmachine/vending_mapmarker.prefab";
+        private const string ExplosionMapMakerPrefab = "assets/prefabs/tools/map/explosionmarker.prefab";
+        private const string CrateMarkerPrefab = "assets/prefabs/tools/map/cratemarker.prefab";
         private const string BradleyExplosionEffectPrefab = "assets/prefabs/npc/m2bradley/effects/bradley_explosion.prefab";
 
         private static readonly FieldInfo TrainCouplingIsValidField = typeof(TrainCoupling).GetField("isValid", BindingFlags.NonPublic | BindingFlags.Instance)
@@ -3603,6 +3605,11 @@ namespace Oxide.Plugins
                     trainController.HandleConductorTrigger(triggerData);
                 }
 
+                if (_config.DebugEnableGlobalBroadcast)
+                {
+                    primaryTrainEngine.EnableGlobalBroadcast(true);
+                }
+
                 return true;
             }
 
@@ -3748,9 +3755,11 @@ namespace Oxide.Plugins
                 NextState = nextState;
             }
 
-            public T GetNextStateOfType<T>() where T : TrainState
+            public T GetNextStateOfType<T>(bool includingSelf = false) where T : TrainState
             {
-                return NextState as T ?? (NextState as TransitionState)?.GetNextStateOfType<T>();
+                return (includingSelf ? this as T : null)
+                       ?? NextState as T
+                       ?? (NextState as TransitionState)?.GetNextStateOfType<T>();
             }
 
             public void SwitchToNextStateOfType<T>() where T : TrainState
@@ -3820,44 +3829,55 @@ namespace Oxide.Plugins
 
         private class IdleState : TransitionState
         {
+            private const float MaxDelayMultiplier = 2f;
+
             public override Color Color => _isIdleDueToCollision ? Color.red : Color.white;
 
-            private readonly float _idleSeconds;
+            private float _durationSeconds;
             private readonly bool _isIdleDueToCollision;
-            private readonly bool _shouldReducePressure;
+            private float _startTime;
 
-            public IdleState(TrainController trainController, TrainState nextState, float idleSeconds, bool isIdleDueToCollision = false, bool shouldReducePressure = false)
+            public float TimeRemaining => _startTime == 0 ? _durationSeconds : Mathf.Max(_startTime + _durationSeconds - Time.time, 0);
+            public float CumulativeTimeRemaining => TimeRemaining + (GetNextStateOfType<IdleState>()?.CumulativeTimeRemaining ?? 0);
+            public float TimeElapsed => _isIdleDueToCollision || _startTime == 0 ? 0 : Time.time - _startTime;
+
+            public IdleState(TrainController trainController, TrainState nextState, float durationSeconds, bool isIdleDueToCollision = false)
                 : base(trainController, nextState)
             {
-                _idleSeconds = idleSeconds;
+                _durationSeconds = durationSeconds;
                 _isIdleDueToCollision = isIdleDueToCollision;
-                _shouldReducePressure = shouldReducePressure;
             }
 
             public override void Enter()
             {
+                if (!_isIdleDueToCollision && _trainController.DelaySeconds > 0)
+                {
+                    _durationSeconds = Mathf.Min(_durationSeconds * MaxDelayMultiplier, _durationSeconds + _trainController.DelaySeconds);
+                }
+
+                _startTime = Time.time;
                 _trainController.SetThrottle(EngineSpeeds.Zero);
-                _trainController.PrimaryTrainEngineController.Invoke(StopIdling, _idleSeconds);
+                _trainController.PrimaryTrainEngineController.Invoke(StopIdling, _durationSeconds);
             }
 
             public override void Exit()
             {
                 _trainController.PrimaryTrainEngineController.CancelInvoke(StopIdling);
+
+                if (!_isIdleDueToCollision)
+                {
+                    _trainController.ReduceDelay(TimeElapsed);
+                }
             }
 
             private void StopIdling()
             {
-                if (_shouldReducePressure)
-                {
-                    _trainController.ReducePressure();
-                }
-
                 SwitchToNextState();
             }
 
             public override string ToString()
             {
-                return $"{nameof(IdleState)}: {_idleSeconds}{(_isIdleDueToCollision ? "*" : "")}\n{NextState}";
+                return $"{nameof(IdleState)}: {TimeRemaining:f1}{(_isIdleDueToCollision ? "*" : "")}s\n{NextState}";
             }
         }
 
@@ -3867,14 +3887,14 @@ namespace Oxide.Plugins
 
         private class TrainController
         {
-            private const float MaxBackPressure = 15f;
-            private const float BackPressureIncrement = 3f;
+            private const float CollisionIdleSeconds = 5f;
 
             public TrainManager TrainManager { get; }
             public TrainEngineController PrimaryTrainEngineController { get; private set; }
             public TrainState TrainState { get; private set; }
             public bool IsDestroying { get; private set; }
             public bool CountsTowardConductorLimit { get; }
+            public float DelaySeconds { get; private set; }
             public TrainEngine PrimaryTrainEngine => PrimaryTrainEngineController.TrainEngine;
             private Configuration _config => _plugin._config;
 
@@ -3890,6 +3910,12 @@ namespace Oxide.Plugins
             private DrivingState _nextDrivingState =>
                 TrainState as DrivingState ?? (TrainState as TransitionState)?.GetNextStateOfType<DrivingState>();
 
+            private IdleState _idleState =>
+                (TrainState as TransitionState)?.GetNextStateOfType<IdleState>(includingSelf: true);
+
+            private float _cumulativeTimeRemaining => _idleState?.CumulativeTimeRemaining ?? 0;
+            private float _timeElapsed => _idleState?.TimeElapsed ?? 0;
+
             private AutomatedWorkcarts _plugin;
             private readonly List<TrainEngineController> _trainEngineControllers = new();
             private readonly List<ITrainCarComponent> _trainCarComponents = new();
@@ -3901,7 +3927,6 @@ namespace Oxide.Plugins
             private TrainCollisionTrigger _collisionTriggerB;
             private MapMarkerGenericRadius _genericMarker;
             private VendingMachineMapMarker _vendingMarker;
-            private float _backPressure;
             private bool _isDestroyed;
 
             // Desired velocity, ignoring circumstances like stopping/braking/chilling.
@@ -3919,7 +3944,9 @@ namespace Oxide.Plugins
 
             public override string ToString()
             {
-                return $"{PrimaryTrainEngine.CurThrottleSetting} {PrimaryTrainEngine.localTrackSelection}\n{TrainState?.ToString() ?? "No state"}";
+                var adjustment = DelaySeconds - _timeElapsed;
+                var delayInfo = adjustment > 0 ? $" | {adjustment:+#.#}s" : "";
+                return $"{PrimaryTrainEngine.CurThrottleSetting} | {PrimaryTrainEngine.localTrackSelection}{delayInfo}\n{TrainState?.ToString() ?? "No state"}";
             }
 
             public void ScheduleCinematicDestruction()
@@ -4074,7 +4101,7 @@ namespace Oxide.Plugins
                     }
 
                     // Trigger with speed Zero, but no braking.
-                    SwitchState(new IdleState(this, new DrivingState(this, newDepartureThrottle), triggerData.GetStopDuration(), shouldReducePressure: true));
+                    SwitchState(new IdleState(this, new DrivingState(this, newDepartureThrottle), triggerData.GetStopDuration()));
                     return;
                 }
 
@@ -4100,23 +4127,29 @@ namespace Oxide.Plugins
                 }
             }
 
-            public void StartChilling(TrainController forwardController = null)
+            public void PauseEngine(float scheduleAdjustment = 0)
             {
                 if (TrainState is IdleState)
                     return;
 
-                _backPressure = Math.Min((forwardController?._backPressure ?? 0) + BackPressureIncrement, MaxBackPressure);
-                SwitchState(new IdleState(this, TrainState, _backPressure, isIdleDueToCollision: true));
+                DelaySeconds = Mathf.Max(scheduleAdjustment, DelaySeconds);
+                SwitchState(new IdleState(this, TrainState, CollisionIdleSeconds, isIdleDueToCollision: true));
             }
 
-            public void ReducePressure()
+            public void ReduceDelay(float amount)
             {
-                _backPressure = Math.Max(_backPressure - BackPressureIncrement, 0);
+                DelaySeconds = Mathf.Max(DelaySeconds - amount, 0);
             }
 
-            public void DepartEarlyIfStoppedOrStopping()
+            public float DepartEarlyIfStoppedOrStopping()
             {
-                (TrainState as TransitionState)?.SwitchToNextStateOfType<DrivingState>();
+                if (TrainState is not TransitionState transitionState)
+                    return DelaySeconds;
+
+                var timeRemaining = _cumulativeTimeRemaining;
+                transitionState.SwitchToNextStateOfType<DrivingState>();
+                DelaySeconds = Mathf.Max(timeRemaining, DelaySeconds);
+                return DelaySeconds;
             }
 
             public void SwitchState(TrainState nextState)
@@ -4180,6 +4213,11 @@ namespace Oxide.Plugins
                 }
 
                 TrainManager.UnregisterTrainController(this);
+
+                if (_config.DebugEnableGlobalBroadcast)
+                {
+                    PrimaryTrainEngine.EnableGlobalBroadcast(false);
+                }
             }
 
             private bool IsPlayerOnboardTrain(BasePlayer player)
@@ -4226,6 +4264,17 @@ namespace Oxide.Plugins
 
             private void MaybeAddMapMarkers()
             {
+                if (_config.DebugShowCrateMarkers)
+                {
+                    var crateMarker = GameManager.server.CreateEntity(CrateMarkerPrefab) as MapMarker;
+                    if (crateMarker != null)
+                    {
+                        crateMarker.EnableSaving(false);
+                        crateMarker.SetParent(PrimaryTrainEngine);
+                        crateMarker.Spawn();
+                    }
+                }
+
                 if (_config.GenericMapMarker.Enabled)
                 {
                     _genericMarker = GameManager.server.CreateEntity(GenericMapMarkerPrefab, PrimaryTrainEngineController.Position) as MapMarkerGenericRadius;
@@ -4394,6 +4443,18 @@ namespace Oxide.Plugins
                 if (!entityContents.Add(otherTrainCar))
                     return;
 
+                if (_config.DebugShowCollisionsMarkers)
+                {
+                    var explosionMarker = GameManager.server.CreateEntity(ExplosionMapMakerPrefab, transform.position) as MapMarker;
+                    if (explosionMarker != null)
+                    {
+                        explosionMarker.EnableSaving(false);
+                        explosionMarker.EnableGlobalBroadcast(true);
+                        explosionMarker.Spawn();
+                        explosionMarker.Invoke(() => explosionMarker.Kill(), 30f);
+                    }
+                }
+
                 var otherController = TrainController.TrainManager.GetTrainController(otherTrainCar);
 
                 var forward = TrainController.Forward;
@@ -4413,9 +4474,10 @@ namespace Oxide.Plugins
                         backwardController = TrainController;
                     }
 
+                    var scheduleAdjustment = 0f;
                     if (forwardController != null)
                     {
-                        forwardController.DepartEarlyIfStoppedOrStopping();
+                        scheduleAdjustment = forwardController.DepartEarlyIfStoppedOrStopping();
                     }
                     else if (_config.BulldozeOffendingWorkcarts)
                     {
@@ -4424,7 +4486,7 @@ namespace Oxide.Plugins
                         return;
                     }
 
-                    backwardController?.StartChilling(forwardController);
+                    backwardController?.PauseEngine(scheduleAdjustment);
                 }
                 else
                 {
@@ -4438,7 +4500,7 @@ namespace Oxide.Plugins
                         }
                         else
                         {
-                            TrainController.StartChilling();
+                            TrainController.PauseEngine();
                         }
 
                         return;
@@ -5213,6 +5275,15 @@ namespace Oxide.Plugins
 
             [JsonProperty("TriggerDisplayDistance")]
             public float TriggerDisplayDistance = 150;
+
+            [JsonProperty("DebugShowCollisionsMarkers", DefaultValueHandling = DefaultValueHandling.Ignore)]
+            public bool DebugShowCollisionsMarkers;
+
+            [JsonProperty("DebugShowCrateMarkers", DefaultValueHandling = DefaultValueHandling.Ignore)]
+            public bool DebugShowCrateMarkers;
+
+            [JsonProperty("DebugEnableGlobalBroadcast", DefaultValueHandling = DefaultValueHandling.Ignore)]
+            public bool DebugEnableGlobalBroadcast;
 
             public bool IsTunnelTypeEnabled(TunnelType tunnelType)
             {
