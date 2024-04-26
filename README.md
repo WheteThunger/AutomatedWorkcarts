@@ -41,7 +41,7 @@ Each trigger can have multiple properties, including direction (e.g., `Fwd`, `Re
 
 - Can be placed anywhere on train tracks, above or below ground.
 - Only apply to the map they were placed on, using world coordinates.
-- Enabled via the `EnableMapTriggers` configuration option.
+- Enabled via the `Enable map triggers` configuration option.
 - Added with the `aw.addtrigger` or `awt.add` command.
 - Saved in data file: `oxide/data/AutomatedWorkcarts/MAP_NAME.json`.
   - Note: The file name for non-procedural maps will exclude the wipe number so that you can re-use the triggers across force wipes.
@@ -50,11 +50,9 @@ Each trigger can have multiple properties, including direction (e.g., `Fwd`, `Re
 
 - Can be placed only in the vanilla train tunnels.
 - Automatically replicate at all tunnels of the same type, using tunnel-relative coordinates.
-- Enabled via the `EnableTunnelTriggers` -> `*` options.
+- Enabled via the `Enable tunnel triggers` -> `*` options.
 - Added with the `aw.addtunneltrigger` or `awt.addt` command.
 - Saved in data file `oxide/data/AutomatedWorkcarts/TunnelTriggers.json`.
-
-In the future, when Facepunch adds procedurally generated rail connections to monuments, the concept of tunnel triggers will be adapted to "monument triggers", allowing you to place triggers above ground using monument-relative coordinates.
 
 ## Tutorials
 
@@ -62,8 +60,8 @@ In the future, when Facepunch adds procedurally generated rail connections to mo
 
 The plugin provides default triggers which you can enable for underground tunnels. This setup should take only a few minutes.
 
-1. Set `EnableTunnelTriggers` -> `TrainStation` to `true` in the plugin configuration.
-2. Set `EnableTunnelTriggers` -> `VerticalIntersection` to `true` in the plugin configuration.
+1. Set `Enable tunnel triggers` -> `TrainStation` to `true` in the plugin configuration.
+2. Set `Enable tunnel triggers` -> `VerticalIntersection` to `true` in the plugin configuration.
 3. Reload the plugin.
 
 This will place `Conductor` triggers on the vanilla workcart spawn points in the train station maintenance tunnels, which will automatically add conductors to the workcarts when they spawn. The workcarts will drive forward at max speed and turn left at all intersections. This will also place `Brake` triggers at the train stations, which will cause trains to automatically stop briefly near the elevators.
@@ -72,14 +70,24 @@ From the map perspective, each workcart will move in a counter-clockwise circle 
 
 To see the triggers visually, grant the `automatedworkcarts.managetriggers` permission and run the `awt.show` command. For 60 seconds, this will show triggers at nearby tunnels. From here, you can add, update, move, and remove triggers to your liking. See the Commands section for how to manage triggers.
 
+The following screenshot depicts a config with the following properties, with the trains having just spawned a moment ago.
+
+- All default tunnel triggers enabled
+- Vending machine and colored map markers enabled for trains, using dynamic route colors
+- Colored map markers enabled for train stops, using dynamic route colors
+
+![](https://raw.githubusercontent.com/WheteThunger/AutomatedWorkcarts/master/Images/DynamicRouteColors.png))
+
 ### Tutorial: Automate aboveground workcarts
+
+Note: These instructions were originally written for custom maps and may not be suitable for procedurally generated aboveground tracks since trains spawn somewhat randomly. Instead, see the section below or creating spawn points.
 
 1. If you are a map developer, please see the "Tips for map developers" section below. Designing the tracks sensibly will simplify setting up automated routes.
 2. Carefully examine the tracks on your map to determine the route(s) you would like workcarts to use.
 3. Grant yourself the `automatedworkcarts.managetriggers` permission.
 4. Find a train spawn location where you would like trains to automatically receive conductors.
 5. Aim at the track and run the command `awt.add Conductor Fwd Hi`. Any train that spawns on this trigger will automatically receive a conductor, and start driving forward at max speed.
-6. Find a portion of track where you want automated workarts to stop briefly.
+6. Find a portion of track where you want automated workcarts to stop briefly.
 7. Aim at the track and run the command `awt.add Brake Zero 15 Hi`. Any train that passes through this trigger will brake until stopping, wait for `15` seconds, then start moving the same direction at `Hi` speed.
 8. Keep adding/editing triggers and spawning workcarts to refine the routes.
 
@@ -89,7 +97,7 @@ Workcarts can be spawned via spawn triggers. The following steps will walk you t
 
 1. Grant yourself the `automatedworkcarts.managetriggers` permission.
 2. Aim somewhere on train tracks, and run the command `awt.add Workcart` (or `awt.addt Workcart` for a tunnel-relative trigger). A workcart should spawn there immediately (if there is sufficient space) but won't have a conductor.
-3. If the workcart is facing the wrong direction, aim at the trigger while facing approximately the direction you want the workcart to face, then run `awt.rotate` and `awt.respawn`.
+3. If the workcart is facing the wrong direction, aim at the trigger while facing approximately the direction you want the workcart to face, then run `awt.rotate`.
 4. To move the spawn point, aim where you want to move it to, and run `awt.move <id>`, where `<id>` should be replaced with the trigger id which you can see floating above the trigger (it will have a `#`).
 5. To add wagons to the spawn point, aim at the trigger and run the command `awt.train Workcart WagonA WagonB WagonC Workcart`. This example command will add multiple wagons, with an additional workcart at the end. You can add as many wagons and workcarts as you want, in any order, as long as there is enough space for them on the tracks.
 6. If you want to add a conductor to the train, aim at the trigger and run `awt.update Conductor Fwd Hi` then `awt.respawn`.
@@ -108,7 +116,7 @@ Note: If the train is destroyed, it will be respawned up to 30 seconds later. At
 - `aw.toggle @<optional_route_name>` -- Toggles automation of the train you are looking at.
   - If the route name is specified, the train will respond to both global triggers (i.e., triggers that do not specify a route) and triggers assigned to that route. The train will ignore triggers assigned other routes.
   - If the route name is **not** specified, the train will respond only to global triggers.
-  - The train will start driving according to `DefaultSpeed` and `DefaultTrackSelection` in the plugin configuration.
+  - The train will start driving according to `DefaultSpeed` and `Default track selection` in the plugin configuration.
 - `aw.resetall` -- Resets all automated trains to normal. This removes all conductors. **Exception:** Trains spawned by conductor triggers will keep their conductors.
 
 ### Manage triggers
@@ -142,7 +150,7 @@ Note: If the train is destroyed, it will be respawned up to 30 seconds later. At
   - Options are the same as for `aw.addtrigger`.
   - This is useful for removing properties from a trigger (without having to remove and add it back) since `aw.updatetrigger` does not remove properties.
 - `aw.movetrigger <id>` (alias: `awt.move`) -- Moves the specified trigger to the track position where the player is aiming.
-- `aw.rotatetrigger <id>` (alias: `awt.rotate`) -- Rotates the specified trigger to where the player is facing. This is only useful for `Spawn` triggers since it determines which way the train will be facing when spawned.
+- `aw.rotatetrigger <id>` (alias: `awt.rotate`) -- Rotates the specified trigger to where the player is facing. This is only useful for spawn triggers since it determines which way the train will be facing when spawned. This command will automatically respawn the train if the rotation has been reversed.
 - `aw.removetrigger <id>` (alias: `awt.remove`) -- Removes the specified trigger.
 - `aw.enabletrigger <id>` (alias: `awt.enable`) -- Enables the specified trigger. This is identical to `aw.updatetrigger <id> enabled`.
 - `aw.disabletrigger <id>` (alias: `awt.disable`) -- Disables the specified trigger. This is identical to `aw.updatetrigger <id> disabled`. Disabled triggers are ignored by trains and are colored gray.
@@ -201,13 +209,13 @@ Default configuration:
 
 ```json
 {
-  "PlayHornForNearbyPlayersInRadius": 0.0,
-  "DefaultSpeed": "Fwd_Hi",
-  "DefaultTrackSelection": "Left",
-  "BulldozeOffendingWorkcarts": false,
-  "DestroyBarricadesInstantly": false,
-  "EnableMapTriggers": true,
-  "EnableTunnelTriggers": {
+  "Play horn for nearby players in radius": 0.0,
+  "Default speed": "Fwd_Hi",
+  "Default track selection": "Left",
+  "Bulldoze offending workcarts": false,
+  "Destroy barricades instantly": false,
+  "Enable map triggers": true,
+  "Enable tunnel triggers": {
     "TrainStation": false,
     "BarricadeTunnel": false,
     "LootTunnel": false,
@@ -215,10 +223,11 @@ Default configuration:
     "LargeIntersection": false,
     "VerticalIntersection": false
   },
-  "MaxConductors": -1,
-  "SpawnTriggersRespectConductorLimit": false,
-  "DisableDefaultTunnelWorkcartSpawnPoints": false,
-  "ConductorOutfit": [
+  "Max conductors": -1,
+  "Spawn triggers respect conductor limit": false,
+  "Disable default tunnel workcart spawn points": false,
+  "Trigger display distance": 150.0,
+  "Conductor outfit": [
     {
       "ShortName": "jumpsuit.suit",
       "Skin": 0
@@ -232,52 +241,95 @@ Default configuration:
       "Skin": 0
     }
   ],
-  "ColoredMapMarker": {
-    "Enabled": false,
-    "Color": "#0099ff",
-    "Alpha": 1.0,
-    "Radius": 0.05
-  },
-  "VendingMapMarker": {
-    "Enabled": false,
-    "Name": "Automated Train"
-  },
-  "MapMarkerUpdateIntervalSeconds": 5.0,
-  "TriggerDisplayDistance": 150.0
+  "Map markers": {
+    "Train map markers": {
+      "Map marker update interval seconds": 5.0,
+      "Colored map marker": {
+        "Enabled": false,
+        "Color": "#00ff00",
+        "Alpha": 1.0,
+        "Radius": 0.05,
+        "Use dynamic route color": false
+      },
+      "Vending map marker": {
+        "Enabled": false,
+        "Name": "Automated Train"
+      }
+    },
+    "Train stop map markers": {
+      "Display only while stop is reachable": false,
+      "Colored map marker": {
+        "Enabled": false,
+        "Color": "#ff9900",
+        "Alpha": 1.0,
+        "Radius": 0.1,
+        "Use dynamic route color": false
+      },
+      "Vending map marker": {
+        "Enabled": false,
+        "Name": "Train Stop"
+      }
+    },
+    "Dynamic route colors": [
+      "#ff0000",
+      "#ff9900",
+      "#ffff00",
+      "#00ff00",
+      "#0099ff",
+      "#cc00ff",
+      "#ffffff",
+      "#777777"
+    ]
+  }
 }
 ```
 
-- `PlayHornForNearbyPlayersInRadius` -- Distance from nearby players required to automatically play the train horn. Set to `0.0` to disable the horn.
-- `DefaultSpeed` -- Default speed to use when a train starts being automated.
+- `Play horn for nearby players in radius` -- Distance from nearby players required to automatically play the train horn. Set to `0.0` to disable the horn.
+- `Default speed` -- Default speed to use when a train starts being automated.
   - Allowed values: `"Rev_Hi"` | `"Rev_Med"` | `"Rev_Lo"` | `"Zero"` | `"Fwd_Lo"` | `"Fwd_Med"` | `"Fwd_Hi"`.
   - This value is ignored if the train is on a trigger that specifies speed.
-- `DefaultTrackSelection` -- Default track selection to use when a train starts being automated.
+- `Default track selection` -- Default track selection to use when a train starts being automated.
   - Allowed values: `"Left"` | `"Default"` | `"Right"`.
   - This value is ignored if the train is on a trigger that specifies track selection.
-- `BulldozeOffendingWorkcarts` (`true` or `false`) -- While `true`, automated trains will destroy other non-automated trains in their path.
-- `DestroyBarricadesInstantly` (`true` or `false`) -- While `true`, automated trains will destroy train barricades instantly, though the train may still slow down.
+- `Bulldoze offending workcarts` (`true` or `false`) -- While `true`, automated trains will destroy other non-automated trains in their path.
+- `Destroy barricades instantly` (`true` or `false`) -- While `true`, automated trains will destroy train barricades instantly, though the train may still slow down.
   - Regardless of this setting, automated trains may destroy each other in head-on or perpendicular collisions.
-- `EnableMapTriggers` (`true` or `false`) -- While `false`, existing map-specific triggers will be disabled, and no new map-specific triggers can be added.
-- `EnableTunnelTriggers` -- While `false` for a particular tunnel type, existing triggers in those tunnels will be disabled, and no new triggers can be added to tunnels of that type.
+- `Enable map triggers` (`true` or `false`) -- While `false`, existing map-specific triggers will be disabled, and no new map-specific triggers can be added.
+- `Enable tunnel triggers` -- While `false` for a particular tunnel type, existing triggers in those tunnels will be disabled, and no new triggers can be added to tunnels of that type.
   - `TrainStation` (`true` or `false`) -- Self-explanatory.
   - `BarricadeTunnel` (`true` or `false`) -- This affects straight tunnels that spawn NPCs, loot, as well as barricades on the tracks.
   - `LootTunnel` (`true` or `false`) -- This affects straight tunnels that spawn NPCs and loot.
   - `Intersection` (`true` or `false`) -- This affects 3-way intersections.
   - `LargeIntersection` (`true` or `false`) -- This affects 4-way intersections.
-- `MaxConductors` -- The maximum number of automated trains allowed on the map at once. Set to `-1` for no limit. Note that having multiple automated workcarts on a single train will count as only one conductor. **Exception:** Trains spawned by conductor triggers are not subject to the conductor limit, nor do they count toward the conductor limit, unless `SpawnTriggersRespectConductorLimit` is set to `true`.
-- `SpawnTriggersRespectConductorLimit` (`true` or `false`) -- While `true`, trains spawned by conductor triggers are subject to the conductor limit.
-- `DisableDefaultTunnelWorkcartSpawnPoints` (`true` or `false`) -- While `true`, vanilla workcart spawn points at train station maintenance tunnels will be disabled, and any existing workcarts spawned by those spawn points will be destroyed when the plugin loads. This enables you to create custom spawn points in the same location, allowing you to use alternative train engines plus optional wagons.
-- `ConductorOutfit` -- Items to use for the outfit of each conductor.
-- `ColoredMapMarker`
-  - `Enabled` (`true` or `false`) -- Whether to enable colored map markers. Enabling this has a performance cost.
-  - `Color` -- The marker color, using the hexadecimal format popularized by HTML.
-  - `Alpha` (`0.0` - `1.0`) -- The marker transparency (`0.0` is invisible, `1.0` is fully opaque).
-  - `Radius` -- The marker radius.
-- `VendingMapMarker`
-  - `Enabled` (`true` or `false`) -- Whether to enable vending machine map markers. Enabling this has a performance cost.
-  - `Name` -- The name to display when hovering the mouse over the marker.
-- `MapMarkerUpdateIntervalSeconds` -- The number of seconds between map marker updates. Updating the map markers periodically for many trains can impact performance, so you may adjust this value to trade off between accuracy and performance.
-- `TriggerDisplayDistance ` -- Determines how close you must be to a trigger to see it when viewing triggers (e.g., after running `awt.show`).
+- `Max conductors` -- The maximum number of automated trains allowed on the map at once. Set to `-1` for no limit. Note that having multiple automated workcarts on a single train will count as only one conductor. **Exception:** Trains spawned by conductor triggers are not subject to the conductor limit, nor do they count toward the conductor limit, unless `Spawn triggers respect conductor limit` is set to `true`.
+- `Spawn triggers respect conductor limit` (`true` or `false`) -- While `true`, trains spawned by conductor triggers are subject to the conductor limit.
+- `Disable default tunnel workcart spawn points` (`true` or `false`) -- While `true`, vanilla workcart spawn points at train station maintenance tunnels will be disabled, and any existing workcarts spawned by those spawn points will be destroyed when the plugin loads. This enables you to create custom spawn points in the same location, allowing you to use alternative train engines plus optional wagons.
+- `Trigger display distance ` -- Determines how close you must be to a trigger to see it when viewing triggers (e.g., after running `awt.show`).
+- `Conductor outfit` -- Items to use for the outfit of each conductor.
+- `Map markers`
+  - `Train map markers` -- Configure map markers for automated trains.
+    - `Map marker update interval seconds` -- The number of seconds between map marker updates. Updating the map markers periodically for many trains can impact performance, so you may adjust this value to trade off between accuracy and performance.
+    - `Colored map marker`
+      - `Enabled` (`true` or `false`) -- Whether to enable colored map markers for automated trains. Enabling this has a performance cost.
+      - `Color` -- The marker color, using the hexadecimal format popularized by HTML.
+      - `Alpha` (`0.0` - `1.0`) -- The marker transparency (`0.0` is invisible, `1.0` is fully opaque).
+      - `Radius` -- The marker radius.
+      - `Use dynamic route color` (`true` or `false`) -- While `true`, instead of using the specific color configured above, the color will be assigned according to the distinct route that each train is taking, determined by which unique set of triggers the train is predicted to interact with. The color will be assigned from the list of `Dynamic route colors`.
+  - `Vending map marker`
+    - `Enabled` (`true` or `false`) -- Whether to enable vending machine map markers for automated trains. Enabling this has a performance cost.
+    - `Name` -- The name to display when hovering the mouse over the marker.
+  - `Train stop map markers` -- Configure map markers for automated train stops. Any trigger with speed `Zero` is considered a stop.
+    - `Display only while stop is reachable` (`true` or `false`) -- While `true`, train stops will only display on the map if it is predicted that a currently automated train will reach the trigger at some point. While `false`, all train stops will always be shown on the map.  
+    - `Colored map marker`
+      - `Enabled` (`true` or `false`) -- Whether to enable colored map markers.
+      - `Color` -- The marker color, using the hexadecimal format popularized by HTML.
+      - `Alpha` (`0.0` - `1.0`) -- The marker transparency (`0.0` is invisible, `1.0` is fully opaque).
+      - `Radius` -- The marker radius.
+      - `Use dynamic route color` (`true` or `false`) -- While `true`, the color will be assigned according to the distinct route that each train is taking, determined by which unique set of triggers the train is predicted to interact with. The color will be assigned from the list of `Dynamic route colors`. If multiple distinct train routes touch this trigger, the color for only one of those routes will be chosen.
+    - `Vending map marker`
+      - `Enabled` (`true` or `false`) -- Whether to enable vending machine map markers for train stops.
+      - `Name` -- The name to display when hovering the mouse over the marker.
+  - `Dynamic route colors` -- List of colors that can be applied to automated train and train stop map markers, if `Use dynamic route color` is enabled for them. If there are more distinct routes than colors, colors will be reused for multiple routes.
 
 ## Routes (advanced)
 
@@ -309,11 +361,11 @@ A train can only be assigned a route when it receives a conductor. This can be d
 
 #### Will this plugin cause lag?
 
-This plugin's logic is optimized for performance and should not cause lag. However, trains moving along the tracks does incur some overhead, regardless of whether a player or NPC is driving them. Therefore, having many automated trains may reduce both client and server FPS. One way to address this is to limit the number of automated trains with the `MaxConductors` configuration option.
+This plugin's logic is optimized for performance and should not cause lag. However, trains moving along the tracks does incur some overhead, regardless of whether a player or NPC is driving them. Therefore, having many automated trains may reduce both client and server FPS. One way to address this is to limit the number of automated trains with the `Max conductors` configuration option.
 
 #### Is this compatible with the Cargo Train Event plugin?
 
-Generally, yes. However, if all trains are automated, the Cargo Train Event will never start since it needs to select an idle workcart, so it's recommended to limit the number of automated trains using the `MaxConductors` configuration option, and/or to automate only specific trains based on their spawn location using triggers.
+Generally, yes. However, if all trains are automated, the Cargo Train Event will never start since it needs to select an idle workcart, so it's recommended to limit the number of automated trains using the `Max conductors` configuration option, and/or to automate only specific trains based on their spawn location using triggers.
 
 #### Is it safe to allow player trains and automated trains on the same tracks?
 
@@ -322,7 +374,7 @@ The **best practice** is to have separate, independent tracks for player vs auto
 - When an automated train is rear-ended, if it's currently stopping or waiting at a stop, it will depart early.
 - When an automated train collides with another train in front of it, its engine stops for a few seconds to allow the forward train to get some distance. This is especially useful for intersections since it allows one train to attempt passage while the other backs off.
 - When two automated trains collide head-on, the slower one (or a random one if they are going the same speed) will explode.
-- When an automated train collides with a non-automated train in a manner other than a rear-end, having the `BulldozeOffendingWorkcarts` configuration option set to `true` will cause the non-automated train to be destroyed.
+- When an automated train collides with a non-automated train in a manner other than a rear-end, having the `Bulldoze offending workcarts` configuration option set to `true` will cause the non-automated train to be destroyed.
 
 ## Tips for map developers
 

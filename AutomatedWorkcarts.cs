@@ -57,6 +57,8 @@ namespace Oxide.Plugins
         private readonly DisableSpawnPointManager _disableSpawnPointManager = new();
         private readonly TriggerManager _triggerManager;
         private readonly TrainManager _trainManager;
+        private readonly RouteManager _routeManager;
+        private readonly ColorMarkerUpdateManager _colorMarkerUpdateManager;
 
         private Coroutine _startupCoroutine;
         private Timer _showStatesTimer;
@@ -65,6 +67,8 @@ namespace Oxide.Plugins
         {
             _trainManager = new TrainManager(this, _spawnedTrainCarTracker);
             _triggerManager = new TriggerManager(this, _trainManager);
+            _routeManager = new RouteManager(this);
+            _colorMarkerUpdateManager = new ColorMarkerUpdateManager(this);
         }
 
         #endregion
@@ -73,13 +77,14 @@ namespace Oxide.Plugins
 
         private void Init()
         {
+            _config.Init();
             _data = StoredPluginData.Load();
             _tunnelData = StoredTunnelData.Load();
 
             permission.RegisterPermission(PermissionToggle, this);
             permission.RegisterPermission(PermissionManageTriggers, this);
 
-            if (!_config.GenericMapMarker.Enabled)
+            if (!_config.MapMarkers.AnyColorsEnabled)
             {
                 Unsubscribe(nameof(OnPlayerConnected));
             }
@@ -102,6 +107,8 @@ namespace Oxide.Plugins
             _triggerManager.DestroyAll();
             _trainManager.Unload();
             _disableSpawnPointManager.Unload();
+            _routeManager.Unload();
+            _colorMarkerUpdateManager.Unload();
         }
 
         private void OnServerSave()
@@ -129,7 +136,7 @@ namespace Oxide.Plugins
                 return;
             }
 
-            _trainManager.ResendAllGenericMarkers();
+            _colorMarkerUpdateManager.Restart();
         }
 
         private object OnTrainCarUncouple(TrainCar trainCar, BasePlayer player)
@@ -250,7 +257,7 @@ namespace Oxide.Plugins
             if (!VerifyAimingAtTrackPosition(player, out var trackPosition))
                 return;
 
-            var triggerData = new TriggerData() { Position = trackPosition };
+            var triggerData = new TriggerData { Position = trackPosition };
             AddTriggerShared(player, cmd, args, triggerData);
         }
 
@@ -387,7 +394,7 @@ namespace Oxide.Plugins
         [Command("aw.enabletrigger", "awt.enable")]
         private void CommandEnableTrigger(IPlayer player, string cmd, string[] args)
         {
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out var optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out _))
                 return;
 
             var newTriggerData = triggerData.Clone();
@@ -402,7 +409,7 @@ namespace Oxide.Plugins
         [Command("aw.disabletrigger", "awt.disable")]
         private void CommandDisableTrigger(IPlayer player, string cmd, string[] args)
         {
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out var optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out _))
                 return;
 
             var newTriggerData = triggerData.Clone();
@@ -417,7 +424,7 @@ namespace Oxide.Plugins
         [Command("aw.movetrigger", "awt.move")]
         private void CommandMoveTrigger(IPlayer player, string cmd, string[] args)
         {
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out var optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out _))
                 return;
 
             if (!VerifyAimingAtTrackPosition(player, out var trackPosition))
@@ -452,7 +459,7 @@ namespace Oxide.Plugins
         [Command("aw.removetrigger", "awt.remove")]
         private void CommandRemoveTrigger(IPlayer player, string cmd, string[] args)
         {
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out var optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out _))
                 return;
 
             _triggerManager.RemoveTrigger(triggerData);
@@ -465,7 +472,7 @@ namespace Oxide.Plugins
         [Command("aw.rotatetrigger", "awt.rotate")]
         private void CommandSetTriggerRotation(IPlayer player, string cmd, string[] args)
         {
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out var optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out _))
                 return;
 
             var basePlayer = player.Object as BasePlayer;
@@ -473,12 +480,29 @@ namespace Oxide.Plugins
 
             var triggerInstance = _triggerManager.FindNearestTrigger(playerPosition, triggerData);
             var rotation = Quaternion.Euler(basePlayer.viewAngles);
+            var needsRespawn = false;
+
+            if (triggerInstance.Spline != null)
+            {
+                rotation = GetSplineTangentRotation(triggerInstance.Spline, triggerInstance.DistanceOnSpline, rotation);
+
+                if (Vector3.Dot(triggerInstance.SpawnRotation * Vector3.forward, rotation * Vector3.forward) < 0)
+                {
+                    needsRespawn = true;
+                }
+            }
+
             if (triggerInstance is TunnelTriggerInstance tunnelTriggerInstance)
             {
                 rotation *= Quaternion.Inverse(tunnelTriggerInstance.DungeonCellWrapper.Rotation);
             }
 
             _triggerManager.RotateTrigger(triggerData, rotation.eulerAngles.y % 360);
+
+            if (needsRespawn)
+            {
+                _triggerManager.RespawnTrigger(triggerData);
+            }
 
             _triggerManager.ShowAllRepeatedly(basePlayer);
             ReplyToPlayer(player, Lang.RotateTriggerSuccess, GetTriggerPrefix(player, triggerData), triggerData.Id);
@@ -487,7 +511,7 @@ namespace Oxide.Plugins
         [Command("aw.respawntrigger", "awt.respawn")]
         private void CommandRespawnTrigger(IPlayer player, string cmd, string[] args)
         {
-            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out var optionArgs))
+            if (!VerifyCanModifyTrigger(player, cmd, args, Lang.SimpleTriggerSyntax, out var triggerData, out _))
                 return;
 
             if (!triggerData.IsSpawner)
@@ -801,7 +825,7 @@ namespace Oxide.Plugins
             optionArgs = args;
             triggerData = null;
 
-            triggerData = _triggerManager.FindNearestTriggerWhereAiming(basePlayer);
+            triggerData = _triggerManager.FindNearestTriggerWhereAiming(basePlayer)?.TriggerData;
             if (triggerData != null)
                 return true;
 
@@ -1020,6 +1044,9 @@ namespace Oxide.Plugins
 
         #region Helper Methods
 
+        private static void LogError(string message) => Interface.Oxide.LogError($"[Automated Workcarts] {message}");
+        private static void LogWarning(string message) => Interface.Oxide.LogWarning($"[Automated Workcarts] {message}");
+
         private static int GetNextTriggerId(List<TriggerData> triggerList)
         {
             var highestTriggerId = 0;
@@ -1039,58 +1066,6 @@ namespace Oxide.Plugins
 
             return requirePrefix ? null : routeName;
         }
-
-        private IEnumerator DoStartupRoutine()
-        {
-            if (_config.DisableDefaultTunnelWorkcartSpawnPoints)
-                yield return _disableSpawnPointManager.DisableSpawnPointsRoutine();
-
-            yield return _triggerManager.CreateAll();
-
-            var foundTrainEngineIds = new HashSet<ulong>();
-            foreach (var entity in BaseNetworkable.serverEntities)
-            {
-                var trainEngine = entity as TrainEngine;
-                if (trainEngine == null)
-                    continue;
-
-                var trainEngineData = _data.GetTrainEngineData(trainEngine.net.ID.Value);
-                if (trainEngineData != null)
-                {
-                    foundTrainEngineIds.Add(trainEngine.net.ID.Value);
-
-                    var trainEngine2 = trainEngine;
-                    var trainEngineData2 = trainEngineData;
-                    timer.Once(UnityEngine.Random.Range(0, 1f), () =>
-                    {
-                        if (trainEngine2 != null
-                            && !IsTrainOwned(trainEngine2)
-                            && _trainManager.CanHaveMoreConductors()
-                            && !_trainManager.HasTrainController(trainEngine2))
-                        {
-                            _trainManager.TryCreateTrainController(trainEngine2, trainEngineData: trainEngineData2);
-                        }
-                    });
-                }
-            }
-
-            _data.TrimToTrainEngineIds(foundTrainEngineIds);
-        }
-
-        private bool AutomationWasBlocked(TrainEngine trainEngine)
-        {
-            if (ExposedHooks.OnWorkcartAutomationStart(trainEngine) is false)
-                return true;
-
-            if (IsCargoTrain(trainEngine))
-                return true;
-
-            return false;
-        }
-
-        public static void LogInfo(string message) => Interface.Oxide.LogInfo($"[Automated Workcarts] {message}");
-        public static void LogError(string message) => Interface.Oxide.LogError($"[Automated Workcarts] {message}");
-        public static void LogWarning(string message) => Interface.Oxide.LogWarning($"[Automated Workcarts] {message}");
 
         private static float GetThrottleFraction(EngineSpeeds throttle)
         {
@@ -1343,12 +1318,65 @@ namespace Oxide.Plugins
             return Quaternion.LookRotation(tangentDirection);
         }
 
-        private struct SplineInfo
+        private static int CompareVectors(Vector3 a, Vector3 b)
         {
-            public TrainTrackSpline Spline;
-            public float Distance;
-            public bool Ascending;
-            public bool IsForward;
+            var result = a.y.CompareTo(b.y);
+            if (result != 0)
+                return result;
+
+            result = a.x.CompareTo(b.x);
+            if (result != 0)
+                return result;
+
+            return a.z.CompareTo(b.z);
+        }
+
+        private IEnumerator DoStartupRoutine()
+        {
+            if (_config.DisableDefaultTunnelWorkcartSpawnPoints)
+                yield return _disableSpawnPointManager.DisableSpawnPointsRoutine();
+
+            yield return _triggerManager.CreateAll();
+
+            var foundTrainEngineIds = new HashSet<ulong>();
+            foreach (var entity in BaseNetworkable.serverEntities)
+            {
+                var trainEngine = entity as TrainEngine;
+                if (trainEngine == null)
+                    continue;
+
+                var trainEngineData = _data.GetTrainEngineData(trainEngine.net.ID.Value);
+                if (trainEngineData != null)
+                {
+                    foundTrainEngineIds.Add(trainEngine.net.ID.Value);
+
+                    var trainEngine2 = trainEngine;
+                    var trainEngineData2 = trainEngineData;
+                    timer.Once(UnityEngine.Random.Range(0, 1f), () =>
+                    {
+                        if (trainEngine2 != null
+                            && !IsTrainOwned(trainEngine2)
+                            && _trainManager.CanHaveMoreConductors()
+                            && !_trainManager.HasTrainController(trainEngine2))
+                        {
+                            _trainManager.TryCreateTrainController(trainEngine2, trainEngineData: trainEngineData2);
+                        }
+                    });
+                }
+            }
+
+            _data.TrimToTrainEngineIds(foundTrainEngineIds);
+        }
+
+        private bool AutomationWasBlocked(TrainEngine trainEngine)
+        {
+            if (ExposedHooks.OnWorkcartAutomationStart(trainEngine) is false)
+                return true;
+
+            if (IsCargoTrain(trainEngine))
+                return true;
+
+            return false;
         }
 
         private static Vector3 GetPositionAlongTrack(SplineInfo splineInfo, float desiredDistance, TrackSelection trackSelection, out SplineInfo resultSplineInfo, out float remainingDistance)
@@ -1603,6 +1631,7 @@ namespace Oxide.Plugins
         {
             private readonly Plugin _plugin;
             private IEnumerator _inner;
+            private TrackedCoroutine _innerTracked;
 
             public TrackedCoroutine(Plugin plugin, IEnumerator inner = null)
             {
@@ -1617,7 +1646,7 @@ namespace Oxide.Plugins
                     return _inner.Current switch
                     {
                         TrackedCoroutine => _inner.Current,
-                        IEnumerator enumerator => new TrackedCoroutine(_plugin).WithEnumerator(enumerator),
+                        IEnumerator enumerator => GetTrackedCoroutine(enumerator),
                         _ => _inner.Current,
                     };
                 }
@@ -1649,6 +1678,492 @@ namespace Oxide.Plugins
             {
                 _inner = inner;
                 return this;
+            }
+
+            private TrackedCoroutine GetTrackedCoroutine(IEnumerator enumerator)
+            {
+                _innerTracked ??= new TrackedCoroutine(_plugin);
+                return _innerTracked.WithEnumerator(enumerator);
+            }
+        }
+
+        private static class EntityUtils
+        {
+            public static T CreateEntity<T>(string prefabPath, Vector3 position = default, Quaternion rotation = default) where T : BaseEntity
+            {
+                var entity = GameManager.server.CreateEntity(prefabPath, position, rotation);
+                if (entity == null)
+                    return null;
+
+                if (entity is T entityOfType)
+                    return entityOfType;
+
+                UnityEngine.Object.Destroy(entity.gameObject);
+                return null;
+            }
+
+            public static bool KillEntity(BaseEntity entity, BaseNetworkable.DestroyMode destroyMode = BaseNetworkable.DestroyMode.None)
+            {
+                if (entity == null || entity.IsDestroyed)
+                    return false;
+
+                entity.Kill(destroyMode);
+                return true;
+            }
+
+            public static bool MoveEntity(BaseEntity entity, Vector3 position)
+            {
+                var transform = entity.transform;
+                if (transform.position == position)
+                    return false;
+
+                transform.position = position;
+
+                if (!entity.syncPosition)
+                {
+                    entity.InvalidateNetworkCache();
+                    entity.SendNetworkUpdate_Position();
+                }
+
+                return true;
+            }
+        }
+
+        private static class MarkerUtils
+        {
+            public static MapMarkerGenericRadius CreateColorMarker(Vector3 position, Color color, float radius, float alpha = 1)
+            {
+                var colorMarker = EntityUtils.CreateEntity<MapMarkerGenericRadius>(GenericMapMarkerPrefab, position);
+                if (colorMarker == null)
+                    return null;
+
+                colorMarker.EnableSaving(false);
+                colorMarker.EnableGlobalBroadcast(true);
+                colorMarker.syncPosition = false;
+                colorMarker.Spawn();
+
+                colorMarker.color1 = color;
+                colorMarker.color2 = color;
+                colorMarker.alpha = alpha;
+                colorMarker.radius = radius;
+                colorMarker.SendUpdate();
+
+                return colorMarker;
+            }
+
+            public static MapMarkerGenericRadius CreateColorMarker(ColorMarkerOptions markerOptions, Vector3 position, Color? colorOverride = null)
+            {
+                return CreateColorMarker(position, colorOverride ?? markerOptions.Color, markerOptions.Radius, markerOptions.Alpha);
+            }
+
+            public static VendingMachineMapMarker CreateVendingMarker(VendingMarkerOptions markerOptions, Vector3 position)
+            {
+                var vendingMarker = EntityUtils.CreateEntity<VendingMachineMapMarker>(VendingMapMarkerPrefab, position);
+                if (vendingMarker == null)
+                    return null;
+
+                vendingMarker.markerShopName = markerOptions.Name;
+                vendingMarker.EnableSaving(false);
+                vendingMarker.EnableGlobalBroadcast(true);
+                vendingMarker.syncPosition = false;
+                vendingMarker.Spawn();
+
+                return vendingMarker;
+            }
+
+            public static bool ResendMarkerColor(MapMarkerGenericRadius colorMarker)
+            {
+                if (colorMarker == null || colorMarker.IsDestroyed)
+                    return false;
+
+                colorMarker.SendUpdate();
+                return true;
+            }
+
+            public static bool UpdateMarkerColor(MapMarkerGenericRadius colorMarker, Color color)
+            {
+                if (colorMarker == null || colorMarker.IsDestroyed || colorMarker.color1 == color)
+                    return false;
+
+                colorMarker.color1 = color;
+                colorMarker.color2 = color;
+                colorMarker.SendUpdate();
+                return true;
+            }
+        }
+
+        private struct SplineInfo
+        {
+            public TrainTrackSpline Spline;
+            public float Distance;
+            public bool Ascending;
+            public bool IsForward;
+
+            public override string ToString()
+            {
+                return $"{nameof(SplineInfo)}(Distance: {Distance}, Ascending: {Ascending}, IsForward: {IsForward})";
+            }
+        }
+
+        private struct SplineIterator
+        {
+            public SplineInfo SplineInfo;
+            public EngineSpeeds Throttle;
+            public TrackSelection TrackSelection;
+            public readonly string RouteName;
+            private readonly TriggerManager _triggerManager;
+
+            public SplineIterator(SplineInfo splineInfo, EngineSpeeds throttle, TrackSelection trackSelection, string routeName, TriggerManager triggerManager)
+            {
+                SplineInfo = splineInfo;
+                Throttle = throttle;
+                TrackSelection = trackSelection;
+                RouteName = routeName;
+                _triggerManager = triggerManager;
+            }
+
+            public bool MoveNext(HashSet<BaseTriggerInstance> visitedTriggers)
+            {
+                var triggerList = _triggerManager.GetTriggersForSpline(SplineInfo.Spline);
+                if (triggerList != null)
+                {
+                    if (SplineInfo.Ascending)
+                    {
+                        foreach (var triggerInstance in triggerList)
+                        {
+                            if (triggerInstance.DistanceOnSpline < SplineInfo.Distance
+                                || !triggerInstance.TriggerData.MatchesRoute(RouteName))
+                                continue;
+
+                            visitedTriggers.Add(triggerInstance);
+                            HandleTrigger(triggerInstance);
+                        }
+                    }
+                    else
+                    {
+                        for (var i = triggerList.Count - 1; i >= 0; i--)
+                        {
+                            var triggerInstance = triggerList[i];
+                            if (triggerInstance.DistanceOnSpline > SplineInfo.Distance
+                                || !triggerInstance.TriggerData.MatchesRoute(RouteName))
+                                continue;
+
+                            visitedTriggers.Add(triggerInstance);
+                            HandleTrigger(triggerInstance);
+                        }
+                    }
+                }
+
+                var adjacentTrackInfo = GetAdjacentTrackInfo(SplineInfo.Spline, TrackSelection, SplineInfo.Ascending, SplineInfo.IsForward);
+                if (adjacentTrackInfo == null)
+                    return false;
+
+                if (adjacentTrackInfo.orientation == TrackOrientation.Reverse)
+                {
+                    SplineInfo.Ascending = !SplineInfo.Ascending;
+                    SplineInfo.IsForward = !SplineInfo.IsForward;
+                }
+
+                SplineInfo.Spline = adjacentTrackInfo.track;
+                SplineInfo.Distance = SplineInfo.Ascending ? 0 : SplineInfo.Spline.GetLength();
+
+                return true;
+            }
+
+            private void HandleTrigger(BaseTriggerInstance triggerInstance)
+            {
+                TrackSelection = ApplyTrackSelection(TrackSelection, triggerInstance.TriggerData.GetTrackSelectionInstruction());
+
+                var directionInstruction = triggerInstance.TriggerData.GetDirectionInstruction();
+                if (directionInstruction == null)
+                    return;
+
+                var throttleNumber = EngineThrottleToNumber(Throttle);
+                Throttle = ApplyDirection(Throttle, directionInstruction);
+
+                var newThrottleNumber = EngineThrottleToNumber(Throttle);
+                if ((throttleNumber ^ newThrottleNumber) < 0)
+                {
+                    SplineInfo.Ascending = !SplineInfo.Ascending;
+                }
+            }
+        }
+
+        #endregion
+
+        #region Route Manager
+
+        private class Route
+        {
+            public readonly List<BaseTriggerInstance> TriggerList;
+            public readonly List<TrainController> TrainControllerList = new();
+            public Color Color { get; private set; }
+
+            public Route(List<BaseTriggerInstance> triggerList)
+            {
+                TriggerList = triggerList;
+            }
+
+            public bool Matches(List<BaseTriggerInstance> triggerList)
+            {
+                return triggerList.SequenceEqual(TriggerList);
+            }
+
+            public void SetColor(Color color)
+            {
+                Color = color;
+            }
+        }
+
+        private class RouteManager
+        {
+            private readonly AutomatedWorkcarts _plugin;
+            private readonly TrackedCoroutine _trackedCoroutine;
+            private readonly WaitForSeconds _shortDelay = new(TrainController.ConductorTriggerMaxDelay);
+            private List<Route> _allRoutes = new();
+            private Dictionary<TrainController, Route> _trainControllerToRoute = new();
+            private Dictionary<BaseTriggerInstance, Route> _triggerInstanceToRoute = new();
+            private Coroutine _determineRoutesRoutine;
+
+            private HashSet<TrainTrackSpline> _reusableSplineList = new();
+            private HashSet<BaseTriggerInstance> _reusableTriggerList = new();
+            private HashSet<BaseTriggerInstance> _reusableTriggerListForSpline = new();
+
+            private Configuration _config => _plugin._config;
+            private TrainManager _trainManager => _plugin._trainManager;
+            private TriggerManager _triggerManager => _plugin._triggerManager;
+
+            public RouteManager(AutomatedWorkcarts plugin)
+            {
+                _plugin = plugin;
+                _trackedCoroutine = new TrackedCoroutine(_plugin);
+            }
+
+            public void Unload()
+            {
+                StopRoutine();
+            }
+
+            public void RecomputeRoutes()
+            {
+                if (!_config.MapMarkers.AnyDynamicMarkers)
+                    return;
+
+                StopRoutine();
+                _determineRoutesRoutine = ServerMgr.Instance.StartCoroutine(_trackedCoroutine.WithEnumerator(DetermineAllRoutes()));
+            }
+
+            public Route GetRoute(TrainController trainController)
+            {
+                return _trainControllerToRoute.TryGetValue(trainController, out var route)
+                    ? route
+                    : null;
+            }
+
+            public Route GetRoute(BaseTriggerInstance triggerInstance)
+            {
+                return _triggerInstanceToRoute.TryGetValue(triggerInstance, out var route)
+                    ? route
+                    : null;
+            }
+
+            private void StopRoutine()
+            {
+                if (_determineRoutesRoutine != null)
+                {
+                    ServerMgr.Instance.StopCoroutine(_determineRoutesRoutine);
+                }
+            }
+
+            private List<BaseTriggerInstance> DetermineRoute(SplineInfo splineInfo, EngineSpeeds throttle, TrackSelection trackSelection, string routeName)
+            {
+                var debug = _config.DebugDynamicRoutes;
+                if (debug)
+                {
+                    LogWarning($"[Dynamic Routes] Starting analysis: {splineInfo}");
+                }
+
+                _reusableSplineList.Clear();
+                _reusableSplineList.Add(splineInfo.Spline);
+                _reusableTriggerList.Clear();
+
+                var iterator = new SplineIterator(splineInfo, throttle, trackSelection, routeName, _triggerManager);
+
+                for (var i = 0; i < 1000; i++)
+                {
+                    _reusableTriggerListForSpline.Clear();
+
+                    if (!iterator.MoveNext(_reusableTriggerListForSpline))
+                    {
+                        if (debug)
+                        {
+                            LogWarning($"[Dynamic Routes] Failed to get next spline info at iteration {i} after {_reusableSplineList.Count} splines and {_reusableTriggerList.Count} triggers");
+                        }
+
+                        break;
+                    }
+
+                    _reusableSplineList.Add(iterator.SplineInfo.Spline);
+
+                    foreach (var visitedTrigger in _reusableTriggerListForSpline)
+                    {
+                        if (_reusableTriggerList.Add(visitedTrigger))
+                            continue;
+
+                        // Found a repeat trigger
+                        var triggerForClosure = visitedTrigger;
+                        var finalTriggerList = _reusableTriggerList
+                            .SkipWhile(t => t != triggerForClosure)
+                            .OrderBy(t => t.WorldPosition.y)
+                            .ThenBy(t => t.WorldPosition.x)
+                            .ThenBy(t => t.WorldPosition.z)
+                            .ToList();
+
+                        if (debug)
+                        {
+                            LogWarning($"[Dynamic Routes] Found circular route after {_reusableSplineList.Count} splines and {_reusableTriggerList.Count} triggers ({finalTriggerList.Count} unique).");
+                        }
+
+                        return finalTriggerList;
+                    }
+                }
+
+                if (debug)
+                {
+                    LogWarning($"[Dynamic Routes] Failed to find circular route for train after visiting {_reusableSplineList.Count} splines and {_reusableTriggerList.Count} triggers.");
+
+                    foreach (var triggerInstance in _reusableTriggerList)
+                    {
+                        var marker = MarkerUtils.CreateColorMarker(triggerInstance.WorldPosition, Color.magenta, 0.1f);
+                        marker.Invoke(() => marker.Kill(), 10);
+                    }
+                }
+
+                return null;
+            }
+
+            private List<BaseTriggerInstance> DetermineRoute(TrainController trainController)
+            {
+                var primaryTrainEngine = trainController.PrimaryTrainEngine;
+                var distanceOnSpline = primaryTrainEngine.FrontWheelSplineDist;
+                var spline = primaryTrainEngine.FrontTrackSection;
+                var throttle = trainController.DepartureThrottle;
+
+                var splineInfo = new SplineInfo
+                {
+                    Spline = spline,
+                    Ascending = spline.IsForward(trainController.Forward, distanceOnSpline),
+                    Distance = distanceOnSpline,
+                    IsForward = EngineThrottleToNumber(throttle) >= 0,
+                };
+
+                return DetermineRoute(splineInfo, throttle, primaryTrainEngine.localTrackSelection, trainController.RouteName);
+            }
+
+            private IEnumerator DetermineAllRoutes()
+            {
+                // Don't waste time computing routes if the routine is frequently restarting due to changes.
+                yield return _shortDelay;
+
+                _allRoutes.Clear();
+                _trainControllerToRoute.Clear();
+                _triggerInstanceToRoute.Clear();
+
+                var trainControllerList = _trainManager.GetAllTrainControllers();
+
+                foreach (var trainController in trainControllerList)
+                {
+                    var triggerList = DetermineRoute(trainController);
+                    if (triggerList != null)
+                    {
+                        var route = FindMatchingRoute(triggerList);
+                        if (route == null)
+                        {
+                            route = new Route(triggerList);
+                            _allRoutes.Add(route);
+
+                            foreach (var triggerInstance in triggerList)
+                            {
+                                // It's possible to have multiple routes touching a trigger.
+                                // For now, the first one will win, which isn't very deterministic.
+                                _triggerInstanceToRoute.TryAdd(triggerInstance, route);
+                            }
+                        }
+
+                        route.TrainControllerList.Add(trainController);
+                        _trainControllerToRoute[trainController] = route;
+                    }
+
+                    yield return null;
+                }
+
+                if (_config.DebugDynamicRoutes && trainControllerList.Count > 0)
+                {
+                    LogWarning($"[Dynamic Routes] Found {_allRoutes.Count} distinct routes");
+                }
+
+                if (_config.MapMarkers.AnyDynamicColors)
+                {
+                    SortRoutes();
+                    AssignRouteColors();
+
+                    if (_config.MapMarkers.Train.ColorMarker.Enabled)
+                    {
+                        foreach (var trainController in trainControllerList)
+                        {
+                            if (trainController.UpdateMarkerColor())
+                                yield return null;
+                        }
+                    }
+                }
+
+                if (_config.MapMarkers.Stop.AnyDynamicMarkers)
+                    yield return _triggerManager.HandleChangesRoutine();
+            }
+
+            private void SortRoutes()
+            {
+                _allRoutes.Sort((a, b) =>
+                {
+                    for (var i = 0; i < a.TriggerList.Count && i < b.TriggerList.Count; i++)
+                    {
+                        var result = CompareVectors(a.TriggerList[i].WorldPosition, b.TriggerList[i].WorldPosition);
+                        if (result != 0)
+                            return result;
+                    }
+
+                    return a.TriggerList.Count.CompareTo(b.TriggerList.Count);
+                });
+            }
+
+            private void AssignRouteColors()
+            {
+                var colors = _config.MapMarkers.ValidDynamicColors;
+                if (colors.Length == 0)
+                    return;
+
+                var i = 0;
+
+                foreach (var route in _allRoutes)
+                {
+                    route.SetColor(colors[i++]);
+
+                    if (i >= colors.Length)
+                    {
+                        i = 0;
+                    }
+                }
+            }
+
+            private Route FindMatchingRoute(List<BaseTriggerInstance> triggerList)
+            {
+                foreach (var route in _allRoutes)
+                {
+                    if (route.Matches(triggerList))
+                        return route;
+                }
+
+                return null;
             }
         }
 
@@ -1771,6 +2286,71 @@ namespace Oxide.Plugins
                 {
                     spawnGroup.maxPopulation = maxPopulation;
                 }
+            }
+        }
+
+        #endregion
+
+        #region Color Marker Update Manager
+
+        private class ColorMarkerUpdateManager
+        {
+            private readonly AutomatedWorkcarts _plugin;
+            private readonly TrackedCoroutine _trackedCoroutine;
+            private Coroutine _coroutine;
+
+            private readonly List<MapMarkerGenericRadius> _colorMarkerList = new();
+
+            private Configuration _config => _plugin._config;
+            private TrainManager _trainManager => _plugin._trainManager;
+            private TriggerManager _triggerManager => _plugin._triggerManager;
+
+            public ColorMarkerUpdateManager(AutomatedWorkcarts plugin)
+            {
+                _plugin = plugin;
+                _trackedCoroutine = new TrackedCoroutine(plugin);
+            }
+
+            public void Restart()
+            {
+                StopCoroutine();
+                _coroutine = ServerMgr.Instance.StartCoroutine(_trackedCoroutine.WithEnumerator(ResendColorMarkersRoutine()));
+            }
+
+            public void Unload()
+            {
+                StopCoroutine();
+            }
+
+            private void StopCoroutine()
+            {
+                if (_coroutine != null)
+                {
+                    ServerMgr.Instance.StopCoroutine(_coroutine);
+                }
+            }
+
+            private IEnumerator ResendColorMarkersRoutine()
+            {
+                _colorMarkerList.Clear();
+
+                if (_config.MapMarkers.Train.ColorMarker.Enabled)
+                {
+                    _trainManager.GetAllColorMarkers(_colorMarkerList);
+                }
+
+                if (_config.MapMarkers.Stop.ColorMarker.Enabled)
+                {
+                    _triggerManager.GetAllColorMarkers(_colorMarkerList);
+                }
+
+                foreach (var mapMarker in _colorMarkerList)
+                {
+                    if (MarkerUtils.ResendMarkerColor(mapMarker))
+                        yield return null;
+                }
+
+                _colorMarkerList.Clear();
             }
         }
 
@@ -2101,7 +2681,7 @@ namespace Oxide.Plugins
                 var trainTrigger = gameObject.AddComponent<TrainTrigger>();
                 trainTrigger._plugin = plugin;
                 trainTrigger._trainManager = trainManager;
-                trainTrigger._triggerInstance = triggerInstance;
+                trainTrigger.TriggerInstance = triggerInstance;
                 trainTrigger.TriggerData = triggerData;
                 trainTrigger.interestLayers = Layers.Mask.Vehicle_World;
                 return trainTrigger;
@@ -2111,8 +2691,8 @@ namespace Oxide.Plugins
             public const float TriggerRadius = 1f;
 
             public TriggerData TriggerData { get; private set; }
+            public BaseTriggerInstance TriggerInstance { get; private set; }
             private AutomatedWorkcarts _plugin;
-            private BaseTriggerInstance _triggerInstance;
             private TrainManager _trainManager;
 
             public override void OnEntityEnter(BaseEntity entity)
@@ -2134,7 +2714,7 @@ namespace Oxide.Plugins
                 if (TriggerData.IsSpawner)
                 {
                     // Hybrid Spawner/Conductor triggers should only automate trains spawned by the same trigger.
-                    if (!_triggerInstance.DidSpawnTrain(trainCar))
+                    if (!TriggerInstance.DidSpawnTrain(trainCar))
                         return false;
 
                     // Trains spawned by hybrid Spawner/Conductor triggers may be exempt from conductor limits.
@@ -2271,6 +2851,9 @@ namespace Oxide.Plugins
 
             [JsonIgnore]
             public bool IsSpawner => TrainCars?.Length > 0;
+
+            [JsonIgnore]
+            public bool IsStop => GetSpeedInstruction() == SpeedInstruction.Zero;
 
             [JsonIgnore]
             public TrainTriggerType TriggerType => TunnelType != null ? TrainTriggerType.Tunnel : TrainTriggerType.Map;
@@ -2527,6 +3110,7 @@ namespace Oxide.Plugins
             public TriggerData TriggerData { get; }
             public TrainTrackSpline Spline { get; private set; }
             public float DistanceOnSpline { get; private set; }
+            public MapMarkerGenericRadius ColorMarker { get; private set; }
 
             public abstract Vector3 WorldPosition { get; }
             protected abstract Quaternion WorldRotation { get; }
@@ -2541,6 +3125,12 @@ namespace Oxide.Plugins
             private GameObject _gameObject;
             private TrainTrigger _trainTrigger;
             private List<TrainCar> _spawnedTrains;
+            private VendingMachineMapMarker _vendingMarker;
+            private Action _spawnTrainTracked;
+
+            private Configuration _config => _plugin._config;
+            private TriggerManager _triggerManager => _plugin._triggerManager;
+            private RouteManager _routeManager => _plugin._routeManager;
 
             protected BaseTriggerInstance(AutomatedWorkcarts plugin, TrainManager trainManager, TriggerData triggerData)
             {
@@ -2549,10 +3139,109 @@ namespace Oxide.Plugins
                 TriggerData = triggerData;
             }
 
-            public void CreateTrigger()
+            public bool HandleChanges()
             {
+                if (!TriggerData.Enabled)
+                    return Destroy();
+
+                var changed = EnsureTriggerCreated();
+
+                var transform = _gameObject.transform;
+                if (transform.position != TriggerPosition)
+                {
+                    Move();
+                    changed = true;
+                }
+                else if (transform.rotation != WorldRotation)
+                {
+                    transform.rotation = WorldRotation;
+                    changed = true;
+                }
+
+                if (TriggerData.IsSpawner)
+                {
+                    changed |= StartSpawningTrains();
+                }
+                else
+                {
+                    changed |= KillTrains();
+                    changed |= StopSpawningTrains();
+                }
+
+                if (IsMapMarkerEligible())
+                {
+                    changed |= CreateOrUpdateColorMarkerIfNeeded();
+                    changed |= CreateOrUpdateVendingMarkerIfNeeded();
+                }
+                else
+                {
+                    changed |= EntityUtils.KillEntity(ColorMarker);
+                    changed |= EntityUtils.KillEntity(_vendingMarker);
+                }
+
+                return changed;
+            }
+
+            public bool Respawn()
+            {
+                if (!TriggerData.IsSpawner || !TriggerData.Enabled)
+                    return false;
+
+                return KillTrains() | SpawnTrain();
+            }
+
+            public void HandleTrainCarKilled(TrainCar trainCar)
+            {
+                _spawnedTrains?.Remove(trainCar);
+            }
+
+            public bool Destroy()
+            {
+                if (_gameObject == null)
+                    return false;
+
+                UnregisterSpline();
+                KillTrains();
+                StopSpawningTrains();
+                EntityUtils.KillEntity(ColorMarker);
+                EntityUtils.KillEntity(_vendingMarker);
+                UnityEngine.Object.Destroy(_gameObject);
+                _gameObject = null;
+                Spline = null;
+                return true;
+            }
+
+            public bool DidSpawnTrain(TrainCar trainCar)
+            {
+                return _spawnedTrains?.Contains(trainCar) ?? false;
+            }
+
+            private bool IsMapMarkerEligible()
+            {
+                if (!TriggerData.IsStop)
+                    return false;
+
+                if (_config.MapMarkers.Stop.DisplayOnlyWhileStopIsReachable && _routeManager.GetRoute(this) == null)
+                    return false;
+
+                return true;
+            }
+
+            private Color DetermineMarkerColor()
+            {
+                if (!_config.MapMarkers.Stop.ColorMarker.UseDynamicColor)
+                    return _config.MapMarkers.Stop.ColorMarker.Color;
+
+                return _routeManager.GetRoute(this)?.Color ?? _config.MapMarkers.Stop.ColorMarker.Color;
+            }
+
+            private bool EnsureTriggerCreated()
+            {
+                if (_gameObject != null)
+                    return false;
+
                 _gameObject = new GameObject();
-                OnMove();
+                Move();
 
                 var sphereCollider = _gameObject.AddComponent<SphereCollider>();
                 sphereCollider.isTrigger = true;
@@ -2560,17 +3249,28 @@ namespace Oxide.Plugins
                 sphereCollider.gameObject.layer = TrainTrigger.TriggerLayer;
 
                 _trainTrigger = TrainTrigger.AddToGameObject(_plugin, _gameObject, TrainManager, TriggerData, this);
-
-                if (TriggerData.IsSpawner)
-                {
-                    StartSpawningTrains();
-                }
+                return true;
             }
 
-            public void OnMove()
+            private void RegisterSpline()
             {
-                if (_gameObject == null)
+                if (Spline == null)
                     return;
+
+                _triggerManager.RegisterTriggerWithSpline(this, Spline);
+            }
+
+            private void UnregisterSpline()
+            {
+                if (Spline == null)
+                    return;
+
+                _triggerManager.UnregisterTriggerFromSpline(this, Spline);
+            }
+
+            private void Move()
+            {
+                UnregisterSpline();
 
                 _gameObject.transform.SetPositionAndRotation(TriggerPosition, WorldRotation);
 
@@ -2578,6 +3278,7 @@ namespace Oxide.Plugins
                 {
                     Spline = spline;
                     DistanceOnSpline = distanceOnSpline;
+                    RegisterSpline();
                 }
                 else
                 {
@@ -2586,112 +3287,36 @@ namespace Oxide.Plugins
                 }
             }
 
-            public void OnRotate()
-            {
-                if (_gameObject == null)
-                    return;
-
-                _gameObject.transform.rotation = WorldRotation;
-            }
-
-            public void OnEnabledToggled()
-            {
-                if (TriggerData.Enabled)
-                {
-                    Enable();
-                }
-                else
-                {
-                    Disable();
-                }
-            }
-
-            public void OnSpawnerToggled()
-            {
-                if (TriggerData.IsSpawner)
-                {
-                    if (TriggerData.Enabled)
-                    {
-                        StartSpawningTrains();
-                    }
-                }
-                else
-                {
-                    KillTrains();
-                    StopSpawningTrains();
-                }
-            }
-
-            public void Respawn()
-            {
-                if (!TriggerData.IsSpawner || !TriggerData.Enabled)
-                    return;
-
-                KillTrains();
-                SpawnTrain();
-            }
-
-            public void HandleTrainCarKilled(TrainCar trainCar)
-            {
-                _spawnedTrains.Remove(trainCar);
-            }
-
-            public void Destroy()
-            {
-                UnityEngine.Object.Destroy(_gameObject);
-                KillTrains();
-            }
-
-            public bool DidSpawnTrain(TrainCar trainCar)
-            {
-                return _spawnedTrains?.Contains(trainCar) ?? false;
-            }
-
-            private void Enable()
-            {
-                if (_gameObject != null)
-                {
-                    _gameObject.SetActive(true);
-                    if (TriggerData.IsSpawner)
-                    {
-                        StartSpawningTrains();
-                    }
-                }
-                else
-                {
-                    CreateTrigger();
-                }
-            }
-
-            private void Disable()
-            {
-                if (_gameObject != null)
-                {
-                    _gameObject.SetActive(false);
-                }
-
-                KillTrains();
-                StopSpawningTrains();
-            }
-
-            private void StartSpawningTrains()
+            private bool StartSpawningTrains()
             {
                 _spawnedTrains ??= new List<TrainCar>(MaxSpawnedTrains);
-                _trainTrigger.InvokeRepeating(SpawnTrainTracked, UnityEngine.Random.Range(0f, 1f), TimeBetweenSpawns);
+                _spawnTrainTracked ??= SpawnTrainTracked;
+
+                if (_trainTrigger.IsInvoking(_spawnTrainTracked))
+                    return false;
+
+                _trainTrigger.InvokeRepeating(_spawnTrainTracked, UnityEngine.Random.Range(0f, 1f), TimeBetweenSpawns);
+                return true;
             }
 
-            private void StopSpawningTrains()
+            private bool StopSpawningTrains()
             {
-                _trainTrigger.CancelInvoke(SpawnTrainTracked);
+                _spawnTrainTracked ??= SpawnTrainTracked;
+
+                if (!_trainTrigger.IsInvoking(_spawnTrainTracked))
+                    return false;
+
+                _trainTrigger.CancelInvoke(_spawnTrainTracked);
+                return true;
             }
 
-            private void SpawnTrain()
+            private bool SpawnTrain()
             {
                 if (_spawnedTrains.Count >= MaxSpawnedTrains)
-                    return;
+                    return false;
 
                 if (Spline == null)
-                    return;
+                    return false;
 
                 var trackSelection = ApplyTrackSelection(TrackSelection.Default, TriggerData.GetTrackSelectionInstruction());
 
@@ -2756,6 +3381,8 @@ namespace Oxide.Plugins
                         }
                     }, 0.1f);
                 }
+
+                return true;
             }
 
             private void SpawnTrainTracked()
@@ -2765,21 +3392,47 @@ namespace Oxide.Plugins
                 _plugin.TrackEnd();
             }
 
-            private void KillTrains()
+            private bool KillTrains()
             {
                 if (_spawnedTrains == null)
-                    return;
+                    return false;
 
                 for (var i = _spawnedTrains.Count - 1; i >= 0; i--)
                 {
-                    var trainCar = _spawnedTrains[i];
-                    if (trainCar != null && !trainCar.IsDestroyed)
-                    {
-                        trainCar.Kill();
-                    }
-
+                    EntityUtils.KillEntity(_spawnedTrains[i]);
                     _spawnedTrains.RemoveAt(i);
                 }
+
+                return true;
+            }
+
+            private bool CreateOrUpdateColorMarkerIfNeeded()
+            {
+                if (!_config.MapMarkers.Stop.ColorMarker.Enabled)
+                    return false;
+
+                var color = DetermineMarkerColor();
+                if (ColorMarker == null)
+                {
+                    ColorMarker = MarkerUtils.CreateColorMarker(_config.MapMarkers.Stop.ColorMarker, WorldPosition, color);
+                    return true;
+                }
+
+                return EntityUtils.MoveEntity(ColorMarker, WorldPosition) | MarkerUtils.UpdateMarkerColor(ColorMarker, color);
+            }
+
+            private bool CreateOrUpdateVendingMarkerIfNeeded()
+            {
+                if (!_config.MapMarkers.Stop.VendingMarker.Enabled)
+                    return false;
+
+                if (_vendingMarker == null)
+                {
+                    _vendingMarker = MarkerUtils.CreateVendingMarker(_config.MapMarkers.Stop.VendingMarker, WorldPosition);
+                    return true;
+                }
+
+                return EntityUtils.MoveEntity(_vendingMarker, WorldPosition);
             }
         }
 
@@ -2823,35 +3476,20 @@ namespace Oxide.Plugins
                 TriggerData = triggerData;
             }
 
-            public void OnMove()
+            public IEnumerator HandleChangesRoutine()
             {
                 foreach (var triggerInstance in TriggerInstanceList)
                 {
-                    triggerInstance.OnMove();
+                    if (triggerInstance.HandleChanges())
+                        yield return null;
                 }
             }
 
-            public void OnRotate()
+            public void HandleChanges()
             {
                 foreach (var triggerInstance in TriggerInstanceList)
                 {
-                    triggerInstance.OnRotate();
-                }
-            }
-
-            public void OnEnabledToggled()
-            {
-                foreach (var triggerInstance in TriggerInstanceList)
-                {
-                    triggerInstance.OnEnabledToggled();
-                }
-            }
-
-            public void OnSpawnerToggled()
-            {
-                foreach (var triggerInstance in TriggerInstanceList)
-                {
-                    triggerInstance.OnSpawnerToggled();
+                    triggerInstance.HandleChanges();
                 }
             }
 
@@ -2871,6 +3509,20 @@ namespace Oxide.Plugins
                 foreach (var triggerInstance in TriggerInstanceList)
                 {
                     triggerInstance.Destroy();
+                }
+            }
+
+            public void GetAllColorMarkers(List<MapMarkerGenericRadius> markerList)
+            {
+                if (TriggerInstanceList == null || !TriggerData.IsStop)
+                    return;
+
+                foreach (var triggerInstance in TriggerInstanceList)
+                {
+                    if (triggerInstance.ColorMarker != null)
+                    {
+                        markerList.Add(triggerInstance.ColorMarker);
+                    }
                 }
             }
 
@@ -2902,11 +3554,7 @@ namespace Oxide.Plugins
             {
                 var triggerInstance = new MapTriggerInstance(plugin, _trainManager, TriggerData);
                 TriggerInstanceList = new BaseTriggerInstance[] { triggerInstance };
-
-                if (TriggerData.Enabled)
-                {
-                    triggerInstance.CreateTrigger();
-                }
+                triggerInstance.HandleChanges();
             }
         }
 
@@ -2924,11 +3572,7 @@ namespace Oxide.Plugins
                 {
                     var triggerInstance = new TunnelTriggerInstance(plugin, _trainManager, TriggerData, matchingDungeonCells[i]);
                     TriggerInstanceList[i] = triggerInstance;
-
-                    if (TriggerData.Enabled)
-                    {
-                        triggerInstance.CreateTrigger();
-                    }
+                    triggerInstance.HandleChanges();
                 }
             }
         }
@@ -2942,7 +3586,7 @@ namespace Oxide.Plugins
             private class PlayerInfo
             {
                 public Timer Timer;
-                public string Route;
+                public string RouteName;
             }
 
             private const float TriggerDisplayDuration = 1f;
@@ -2957,6 +3601,7 @@ namespace Oxide.Plugins
             private Configuration _config => _plugin._config;
             private StoredTunnelData _tunnelData => _plugin._tunnelData;
             private StoredMapData _mapData => _plugin._mapData;
+            private RouteManager _routeManager => _plugin._routeManager;
             private float TriggerDisplayDistanceSquared => _config.TriggerDisplayDistance * _config.TriggerDisplayDistance;
 
             public TriggerManager(AutomatedWorkcarts plugin, TrainManager trainManager)
@@ -2965,51 +3610,38 @@ namespace Oxide.Plugins
                 _trainManager = trainManager;
             }
 
-            private void RegisterTriggerWithSpline(BaseTriggerInstance triggerInstance, TrainTrackSpline spline)
+            public void RegisterTriggerWithSpline(BaseTriggerInstance triggerInstance, TrainTrackSpline spline)
             {
                 if (!_splinesToTriggers.TryGetValue(spline, out var triggerInstanceList))
                 {
-                    triggerInstanceList = new List<BaseTriggerInstance>() { triggerInstance };
+                    triggerInstanceList = new List<BaseTriggerInstance>();
                     _splinesToTriggers[spline] = triggerInstanceList;
                 }
-                else
+
+                if (triggerInstanceList.Contains(triggerInstance))
+                    return;
+
+                triggerInstanceList.Add(triggerInstance);
+                triggerInstanceList.Sort((a, b) => a.DistanceOnSpline.CompareTo(b.DistanceOnSpline));
+            }
+
+            public void UnregisterTriggerFromSpline(BaseTriggerInstance triggerInstance, TrainTrackSpline spline)
+            {
+                if (!_splinesToTriggers.TryGetValue(spline, out var triggerInstanceList))
+                    return;
+
+                triggerInstanceList.Remove(triggerInstance);
+                if (triggerInstanceList.Count == 0)
                 {
-                    triggerInstanceList.Add(triggerInstance);
+                    _splinesToTriggers.Remove(spline);
                 }
             }
 
-            private void UnregisterTriggerFromSpline(BaseTriggerInstance triggerInstance, TrainTrackSpline spline)
+            public List<BaseTriggerInstance> GetTriggersForSpline(TrainTrackSpline spline)
             {
-                if (_splinesToTriggers.TryGetValue(spline, out var triggerInstanceList))
-                {
-                    triggerInstanceList.Remove(triggerInstance);
-                    if (triggerInstanceList.Count == 0)
-                    {
-                        _splinesToTriggers.Remove(spline);
-                    }
-                }
-            }
-
-            private void RegisterTriggerWithSpline(BaseTriggerController triggerController)
-            {
-                foreach (var triggerInstance in triggerController.TriggerInstanceList)
-                {
-                    if (triggerInstance.Spline != null)
-                    {
-                        RegisterTriggerWithSpline(triggerInstance, triggerInstance.Spline);
-                    }
-                }
-            }
-
-            private void UnregisterTriggerFromSpline(BaseTriggerController triggerController)
-            {
-                foreach (var triggerInstance in triggerController.TriggerInstanceList)
-                {
-                    if (triggerInstance.Spline != null)
-                    {
-                        UnregisterTriggerFromSpline(triggerInstance, triggerInstance.Spline);
-                    }
-                }
+                return _splinesToTriggers.TryGetValue(spline, out var triggerList)
+                    ? triggerList
+                    : null;
             }
 
             public TriggerData FindTrigger(int triggerId, TrainTriggerType triggerType)
@@ -3045,6 +3677,16 @@ namespace Oxide.Plugins
                     CreateMapTriggerController(triggerData);
                     _mapData.AddTrigger(triggerData);
                 }
+
+                _routeManager.RecomputeRoutes();
+            }
+
+            public IEnumerator HandleChangesRoutine()
+            {
+                foreach (var triggerController in _triggerControllers.Values)
+                {
+                    yield return triggerController.HandleChangesRoutine();
+                }
             }
 
             private void SaveTrigger(TriggerData triggerData)
@@ -3072,37 +3714,20 @@ namespace Oxide.Plugins
                 if (triggerController == null)
                     return;
 
-                var enabledChanged = triggerData.Enabled != newTriggerData.Enabled;
-                var spawnerChanged = triggerData.IsSpawner != newTriggerData.IsSpawner;
                 var trainCarsChanged = !CollectionsEqual(triggerData.TrainCars, newTriggerData.TrainCars);
 
                 triggerData.CopyFrom(newTriggerData);
                 triggerData.InvalidateCache();
 
-                if (enabledChanged)
-                {
-                    triggerController.OnEnabledToggled();
+                triggerController.HandleChanges();
 
-                    if (triggerData.Enabled)
-                    {
-                        RegisterTriggerWithSpline(triggerController);
-                    }
-                    else
-                    {
-                        UnregisterTriggerFromSpline(triggerController);
-                    }
-                }
-
-                if (spawnerChanged)
-                {
-                    triggerController.OnSpawnerToggled();
-                }
-                else if (trainCarsChanged)
+                if (trainCarsChanged)
                 {
                     triggerController.Respawn();
                 }
 
                 SaveTrigger(triggerData);
+                _routeManager.RecomputeRoutes();
             }
 
             public void MoveTrigger(TriggerData triggerData, Vector3 position)
@@ -3111,11 +3736,10 @@ namespace Oxide.Plugins
                 if (triggerController == null)
                     return;
 
-                UnregisterTriggerFromSpline(triggerController);
                 triggerData.Position = position;
-                triggerController.OnMove();
-                RegisterTriggerWithSpline(triggerController);
+                triggerController.HandleChanges();
                 SaveTrigger(triggerData);
+                _routeManager.RecomputeRoutes();
             }
 
             public void RotateTrigger(TriggerData triggerData, float rotationAngle)
@@ -3125,8 +3749,9 @@ namespace Oxide.Plugins
                     return;
 
                 triggerData.RotationAngle = rotationAngle;
-                triggerController.OnRotate();
+                triggerController.HandleChanges();
                 SaveTrigger(triggerData);
+                _routeManager.RecomputeRoutes();
             }
 
             public void RespawnTrigger(TriggerData triggerData)
@@ -3153,7 +3778,6 @@ namespace Oxide.Plugins
 
             private void DestroyTriggerController(BaseTriggerController triggerController)
             {
-                UnregisterTriggerFromSpline(triggerController);
                 triggerController.Destroy();
             }
 
@@ -3174,13 +3798,22 @@ namespace Oxide.Plugins
                 {
                     _mapData.RemoveTrigger(triggerData);
                 }
+
+                _routeManager.RecomputeRoutes();
+            }
+
+            public void GetAllColorMarkers(List<MapMarkerGenericRadius> markerList)
+            {
+                foreach (var triggerController in _triggerControllers.Values)
+                {
+                    triggerController.GetAllColorMarkers(markerList);
+                }
             }
 
             private void CreateMapTriggerController(TriggerData triggerData)
             {
                 var triggerController = new MapTriggerController(_trainManager, triggerData);
                 triggerController.Create(_plugin);
-                RegisterTriggerWithSpline(triggerController);
                 _triggerControllers[triggerData] = triggerController;
             }
 
@@ -3188,7 +3821,6 @@ namespace Oxide.Plugins
             {
                 var triggerController = new TunnelTriggerController(_trainManager, triggerData);
                 triggerController.Create(_plugin);
-                RegisterTriggerWithSpline(triggerController);
                 _triggerControllers[triggerData] = triggerController;
             }
 
@@ -3238,7 +3870,7 @@ namespace Oxide.Plugins
 
             public void SetPlayerDisplayedRoute(BasePlayer player, string routeName)
             {
-                GetOrCreatePlayerInfo(player).Route = routeName;
+                GetOrCreatePlayerInfo(player).RouteName = routeName;
             }
 
             public void ShowAllRepeatedly(BasePlayer player, int duration = -1)
@@ -3249,7 +3881,7 @@ namespace Oxide.Plugins
 
                 var playerInfo = GetOrCreatePlayerInfo(player);
 
-                ShowNearbyTriggers(player, player.transform.position, playerInfo.Route);
+                ShowNearbyTriggers(player, player.transform.position, playerInfo.RouteName);
 
                 if (playerInfo.Timer is { Destroyed: false })
                 {
@@ -3263,7 +3895,7 @@ namespace Oxide.Plugins
 
                 playerInfo.Timer = _plugin.timer.Repeat(TriggerDisplayDuration - 0.2f, duration, () =>
                 {
-                    ShowNearbyTriggers(player, player.transform.position, playerInfo.Route);
+                    ShowNearbyTriggers(player, player.transform.position, playerInfo.RouteName);
                 });
             }
 
@@ -3456,16 +4088,16 @@ namespace Oxide.Plugins
                 return GetTriggerController(triggerData)?.FindNearest(position, maxDistanceSquared, out _);
             }
 
-            public TriggerData FindNearestTriggerWhereAiming(BasePlayer player, float maxDistanceSquared = 9)
+            public BaseTriggerInstance FindNearestTriggerWhereAiming(BasePlayer player, float maxDistanceSquared = 9)
             {
-                var triggerInstance = GetHitTrigger(player);
-                if (triggerInstance != null)
-                    return triggerInstance.TriggerData;
+                var trainTrigger = GetHitTrigger(player);
+                if (trainTrigger != null)
+                    return trainTrigger.TriggerInstance;
 
                 if (!TryGetTrackPosition(player, out var trackPosition))
                     return null;
 
-                return FindNearestTrigger(trackPosition, maxDistanceSquared)?.TriggerData;
+                return FindNearestTrigger(trackPosition, maxDistanceSquared);
             }
         }
 
@@ -3504,6 +4136,7 @@ namespace Oxide.Plugins
 
             private Configuration _config => _plugin._config;
             private StoredPluginData _data => _plugin._data;
+            private RouteManager _routeManager => _plugin._routeManager;
 
             public TrainEngine[] GetAutomatedTrainEngines()
             {
@@ -3529,6 +4162,11 @@ namespace Oxide.Plugins
                     return true;
 
                 return CountedConductors < _config.MaxConductors;
+            }
+
+            public List<TrainController> GetAllTrainControllers()
+            {
+                return _trainControllers.ToList();
             }
 
             public TrainController GetTrainController(TrainCar trainCar)
@@ -3562,6 +4200,7 @@ namespace Oxide.Plugins
 
                 var trainController = new TrainController(_plugin, this, trainEngineData, countsTowardConductorLimit);
                 _trainControllers.Add(trainController);
+                _routeManager.RecomputeRoutes();
 
                 var primaryTrainEngineController = TrainEngineController.AddToEntity(_plugin, primaryTrainEngine, trainController);
                 trainController.AddTrainCarComponent(primaryTrainEngineController);
@@ -3630,6 +4269,7 @@ namespace Oxide.Plugins
             public void UnregisterTrainController(TrainController trainController)
             {
                 _trainControllers.Remove(trainController);
+                _plugin._routeManager.RecomputeRoutes();
             }
 
             public void KillTrainController(TrainCar trainCar)
@@ -3660,11 +4300,17 @@ namespace Oxide.Plugins
                 ResetAll();
             }
 
-            public void ResendAllGenericMarkers()
+            public void GetAllColorMarkers(List<MapMarkerGenericRadius> markerList)
             {
                 foreach (var trainController in _trainControllers)
                 {
-                    trainController?.ResendGenericMarker();
+                    if (trainController == null)
+                        continue;
+
+                    if (trainController.ColorMarker != null)
+                    {
+                        markerList.Add(trainController.ColorMarker);
+                    }
                 }
             }
 
@@ -3887,6 +4533,7 @@ namespace Oxide.Plugins
 
         private class TrainController
         {
+            public const float ConductorTriggerMaxDelay = 1f;
             private const float CollisionIdleSeconds = 5f;
 
             public TrainManager TrainManager { get; }
@@ -3895,15 +4542,20 @@ namespace Oxide.Plugins
             public bool IsDestroying { get; private set; }
             public bool CountsTowardConductorLimit { get; }
             public float DelaySeconds { get; private set; }
+            public MapMarkerGenericRadius ColorMarker { get; private set; }
+
             public TrainEngine PrimaryTrainEngine => PrimaryTrainEngineController.TrainEngine;
+            public string RouteName => _trainEngineData.Route;
+
             private Configuration _config => _plugin._config;
+            private RouteManager _routeManager => _plugin._routeManager;
 
             public Vector3 Forward => EngineThrottleToNumber(DepartureThrottle) >= 0
                 ? PrimaryTrainEngine.transform.forward
                 : -PrimaryTrainEngine.transform.forward;
 
-            private bool IsStopped => TrainState is IdleState;
-            private bool IsStopping => (TrainState as BrakingState)?.IsStopping ?? false;
+            private bool _isStopped => TrainState is IdleState;
+            private bool _isStopping => (TrainState as BrakingState)?.IsStopping ?? false;
 
             private SpawnedTrainCarTracker _spawnedTrainCarTracker => TrainManager.SpawnedTrainCarTracker;
 
@@ -3925,8 +4577,8 @@ namespace Oxide.Plugins
             private Func<BasePlayer, bool> _nearbyPlayerFilter;
             private TrainCollisionTrigger _collisionTriggerA;
             private TrainCollisionTrigger _collisionTriggerB;
-            private MapMarkerGenericRadius _genericMarker;
             private VendingMachineMapMarker _vendingMarker;
+            private MapMarker _crateMarker;
             private bool _isDestroyed;
 
             // Desired velocity, ignoring circumstances like stopping/braking/chilling.
@@ -4054,10 +4706,7 @@ namespace Oxide.Plugins
                     {
                         foreach (var trainCarComponent in _trainCarComponents.ToArray())
                         {
-                            if (trainCarComponent.TrainCar != null && !trainCarComponent.TrainCar.IsDestroyed)
-                            {
-                                trainCarComponent.TrainCar.Kill(BaseNetworkable.DestroyMode.Gib);
-                            }
+                            EntityUtils.KillEntity(trainCarComponent.TrainCar, BaseNetworkable.DestroyMode.Gib);
                         }
                     }, 0);
 
@@ -4119,12 +4768,9 @@ namespace Oxide.Plugins
                 SetThrottle(nextThrottle);
             }
 
-            public void ResendGenericMarker()
+            public bool UpdateMarkerColor()
             {
-                if (_genericMarker != null)
-                {
-                    _genericMarker.SendUpdate();
-                }
+                return MarkerUtils.UpdateMarkerColor(ColorMarker, DetermineMarkerColor());
             }
 
             public void PauseEngine(float scheduleAdjustment = 0)
@@ -4163,13 +4809,11 @@ namespace Oxide.Plugins
             {
                 SetThrottle(EngineSpeeds.Zero);
 
-                // Delay at least one second in case the train engine needs to reposition after spawning.
-                // Not delaying may cause the train engine to get stuck for unknown reasons.
                 // Delay a random interval to spread out load.
                 PrimaryTrainEngineController.Invoke(() =>
                 {
                     HandleTrigger(triggerData);
-                }, UnityEngine.Random.Range(1, 2f));
+                }, UnityEngine.Random.Range(0f, ConductorTriggerMaxDelay));
             }
 
             public bool UpdateTrainEngineData()
@@ -4197,15 +4841,9 @@ namespace Oxide.Plugins
                     UpdateAllowedCouplings(trainCarComponent.TrainCar, allowFront: true, allowRear: true);
                 }
 
-                if (_genericMarker != null && !_genericMarker.IsDestroyed)
-                {
-                    _genericMarker.Kill();
-                }
-
-                if (_vendingMarker != null && !_vendingMarker.IsDestroyed)
-                {
-                    _vendingMarker.Kill();
-                }
+                EntityUtils.KillEntity(ColorMarker);
+                EntityUtils.KillEntity(_vendingMarker);
+                EntityUtils.KillEntity(_crateMarker);
 
                 for (var i = _trainCarComponents.Count - 1; i >= 0; i--)
                 {
@@ -4218,6 +4856,14 @@ namespace Oxide.Plugins
                 {
                     PrimaryTrainEngine.EnableGlobalBroadcast(false);
                 }
+            }
+
+            private Color DetermineMarkerColor()
+            {
+                if (!_config.MapMarkers.Train.ColorMarker.UseDynamicColor)
+                    return _config.MapMarkers.Train.ColorMarker.Color;
+
+                return _routeManager.GetRoute(this)?.Color ?? _config.MapMarkers.Train.ColorMarker.Color;
             }
 
             private bool IsPlayerOnboardTrain(BasePlayer player)
@@ -4244,7 +4890,7 @@ namespace Oxide.Plugins
 
             private bool ShouldPlayHorn()
             {
-                if (IsStopped || IsStopping)
+                if (_isStopped || _isStopping)
                     return false;
 
                 return Query.Server.GetPlayersInSphere(
@@ -4264,50 +4910,29 @@ namespace Oxide.Plugins
 
             private void MaybeAddMapMarkers()
             {
+                var trainMarkerConfig = _config.MapMarkers.Train;
+                if (trainMarkerConfig.ColorMarker.Enabled)
+                {
+                    ColorMarker = MarkerUtils.CreateColorMarker(trainMarkerConfig.ColorMarker, PrimaryTrainEngineController.Position, DetermineMarkerColor());
+                }
+
+                if (trainMarkerConfig.VendingMarker.Enabled)
+                {
+                    _vendingMarker = MarkerUtils.CreateVendingMarker(trainMarkerConfig.VendingMarker, PrimaryTrainEngineController.Position);
+                }
+
                 if (_config.DebugShowCrateMarkers)
                 {
-                    var crateMarker = GameManager.server.CreateEntity(CrateMarkerPrefab) as MapMarker;
-                    if (crateMarker != null)
+                    _crateMarker = GameManager.server.CreateEntity(CrateMarkerPrefab) as MapMarker;
+                    if (_crateMarker != null)
                     {
-                        crateMarker.EnableSaving(false);
-                        crateMarker.SetParent(PrimaryTrainEngine);
-                        crateMarker.Spawn();
+                        _crateMarker.EnableSaving(false);
+                        _crateMarker.SetParent(PrimaryTrainEngine);
+                        _crateMarker.Spawn();
                     }
                 }
 
-                if (_config.GenericMapMarker.Enabled)
-                {
-                    _genericMarker = GameManager.server.CreateEntity(GenericMapMarkerPrefab, PrimaryTrainEngineController.Position) as MapMarkerGenericRadius;
-                    if (_genericMarker != null)
-                    {
-                        _genericMarker.EnableSaving(false);
-                        _genericMarker.EnableGlobalBroadcast(true);
-                        _genericMarker.syncPosition = false;
-                        _genericMarker.Spawn();
-
-                        _genericMarker.color1 = _config.GenericMapMarker.GetColor();
-                        _genericMarker.color2 = _genericMarker.color1;
-                        _genericMarker.alpha = _config.GenericMapMarker.Alpha;
-                        _genericMarker.radius = _config.GenericMapMarker.Radius;
-                        _genericMarker.SendUpdate();
-                    }
-                }
-
-                if (_config.VendingMapMarker.Enabled)
-                {
-                    _vendingMarker = GameManager.server.CreateEntity(VendingMapMarkerPrefab, PrimaryTrainEngineController.Position) as VendingMachineMapMarker;
-                    if (_vendingMarker != null)
-                    {
-                        _vendingMarker.markerShopName = _config.VendingMapMarker.Name;
-
-                        _vendingMarker.EnableSaving(false);
-                        _vendingMarker.EnableGlobalBroadcast(true);
-                        _vendingMarker.syncPosition = false;
-                        _vendingMarker.Spawn();
-                    }
-                }
-
-                if (_genericMarker == null && _vendingMarker == null)
+                if (ColorMarker == null && _vendingMarker == null)
                     return;
 
                 // Periodically update the marker positions since they aren't parented to the train engines.
@@ -4317,11 +4942,11 @@ namespace Oxide.Plugins
                 {
                     _plugin.TrackStart();
 
-                    if (_genericMarker != null)
+                    if (ColorMarker != null)
                     {
-                        _genericMarker.transform.position = PrimaryTrainEngineController.Position;
-                        _genericMarker.InvalidateNetworkCache();
-                        _genericMarker.SendNetworkUpdate_Position();
+                        ColorMarker.transform.position = PrimaryTrainEngineController.Position;
+                        ColorMarker.InvalidateNetworkCache();
+                        ColorMarker.SendNetworkUpdate_Position();
                     }
 
                     if (_vendingMarker != null)
@@ -4332,7 +4957,7 @@ namespace Oxide.Plugins
                     }
 
                     _plugin.TrackEnd();
-                }, 0, _config.MapMarkerUpdateIntervalSeconds, _config.MapMarkerUpdateIntervalSeconds * 0.1f);
+                }, 0, trainMarkerConfig.UpdateIntervalSeconds, trainMarkerConfig.UpdateIntervalSeconds * 0.1f);
             }
 
             private void EnableInvincibility()
@@ -4631,7 +5256,7 @@ namespace Oxide.Plugins
 
                 foreach (var itemInfo in _config.ConductorOutfit)
                 {
-                    var itemDefinition = itemInfo.GetItemDefinition();
+                    var itemDefinition = itemInfo.ItemDefinition;
                     if (itemDefinition != null)
                     {
                         Conductor.inventory.containerWear.AddItem(itemDefinition, 1, itemInfo.SkinId);
@@ -5144,6 +5769,7 @@ namespace Oxide.Plugins
 
         #region Configuration
 
+        [JsonObject(MemberSerialization.OptIn)]
         private class ItemInfo
         {
             [JsonProperty("ShortName")]
@@ -5152,88 +5778,215 @@ namespace Oxide.Plugins
             [JsonProperty("Skin")]
             public ulong SkinId;
 
-            private bool _isValidated;
-            private ItemDefinition _itemDefinition;
-            public ItemDefinition GetItemDefinition()
+            [JsonIgnore]
+            public ItemDefinition ItemDefinition;
+
+            public void Init()
             {
-                if (!_isValidated)
+                var itemDefinition = ItemManager.FindItemDefinition(ShortName);
+                if (itemDefinition != null)
                 {
-                    var itemDefinition = ItemManager.FindItemDefinition(ShortName);
-                    if (itemDefinition != null)
-                    {
-                        _itemDefinition = itemDefinition;
-                    }
-                    else
-                    {
-                        LogError($"Invalid item short name in config: '{ShortName}'");
-                    }
-
-                    _isValidated = true;
+                    ItemDefinition = itemDefinition;
                 }
-
-                return _itemDefinition;
+                else
+                {
+                    LogError($"Invalid item short name in config: '{ShortName}'");
+                }
             }
         }
 
-        private class GenericMarkerOptions
+        [JsonObject(MemberSerialization.OptIn)]
+        private class ColorMarkerOptions
         {
             [JsonProperty("Enabled")]
-            public bool Enabled = false;
+            public bool Enabled;
 
             [JsonProperty("Color")]
-            public string Color = "#00ff00";
+            public string HexColor = "#00ff00";
 
             [JsonProperty("Alpha")]
             public float Alpha = 1;
 
             [JsonProperty("Radius")]
-            public float Radius = 0.05f;
+            public float Radius;
 
-            private Color? _color;
-            public Color GetColor()
-            {
-                _color ??= ParseColor(Color, UnityEngine.Color.black);
-                return (Color)_color;
-            }
+            [JsonProperty("Use dynamic route color")]
+            public bool UseDynamicColor;
 
-            private static Color ParseColor(string colorString, Color defaultColor)
+            [JsonIgnore]
+            public Color Color;
+
+            public bool EnabledAndDynamic => Enabled && UseDynamicColor;
+
+            public void Init()
             {
-                return ColorUtility.TryParseHtmlString(colorString, out var color)
-                    ? color
-                    : defaultColor;
+                if (ColorUtility.TryParseHtmlString(HexColor, out var color))
+                {
+                    Color = color;
+                }
+                else
+                {
+                    LogError($"Invalid HTML color code in config: {HexColor}");
+                }
             }
         }
 
+        [JsonObject(MemberSerialization.OptIn)]
         private class VendingMarkerOptions
         {
             [JsonProperty("Enabled")]
-            public bool Enabled = false;
+            public bool Enabled;
 
             [JsonProperty("Name")]
-            public string Name = "Automated Train";
+            public string Name;
         }
 
+        [JsonObject(MemberSerialization.OptIn)]
+        private class TrainMarkerOptions
+        {
+            [JsonProperty("Map marker update interval seconds")]
+            public float UpdateIntervalSeconds = 5.0f;
+
+            [JsonProperty("Colored map marker")]
+            public ColorMarkerOptions ColorMarker = new() { Radius = 0.05f };
+
+            [JsonProperty("Vending map marker")]
+            public VendingMarkerOptions VendingMarker = new() { Name = "Automated Train" };
+
+            public void Init()
+            {
+                ColorMarker?.Init();
+            }
+        }
+
+        [JsonObject(MemberSerialization.OptIn)]
+        private class StopMarkerOptions
+        {
+            [JsonProperty("Display only while stop is reachable")]
+            public bool DisplayOnlyWhileStopIsReachable;
+
+            [JsonProperty("Colored map marker")]
+            public ColorMarkerOptions ColorMarker = new()
+            {
+                Radius = 0.1f,
+                HexColor = "#ff9900",
+            };
+
+            [JsonProperty("Vending map marker")]
+            public VendingMarkerOptions VendingMarker = new() { Name = "Train Stop" };
+
+            [JsonIgnore]
+            private bool AnyMarkersEnabled => ColorMarker is { Enabled: true } || VendingMarker is { Enabled: true };
+
+            [JsonIgnore]
+            public bool AnyDynamicMarkers => AnyMarkersEnabled && (DisplayOnlyWhileStopIsReachable || ColorMarker.UseDynamicColor);
+
+            public void Init()
+            {
+                ColorMarker?.Init();
+            }
+        }
+
+        [JsonObject(MemberSerialization.OptIn)]
+        private class MarkerOptions
+        {
+            [JsonProperty("Train map markers")]
+            public TrainMarkerOptions Train = new();
+
+            [JsonProperty("Train stop map markers")]
+            public StopMarkerOptions Stop = new();
+
+            [JsonProperty("Dynamic route colors")]
+            public string[] RouteColors =
+            {
+                "#ff0000",
+                "#ff9900",
+                "#ffff00",
+                "#00ff00",
+                "#0099ff",
+                "#cc00ff",
+                "#ffffff",
+                "#777777",
+            };
+
+            [JsonIgnore]
+            public Color[] ValidDynamicColors;
+
+            [JsonIgnore]
+            public bool AnyColorsEnabled => Train is { ColorMarker.Enabled: true } || Stop is { ColorMarker.Enabled: true };
+
+            [JsonIgnore]
+            public bool AnyDynamicColors => Train is { ColorMarker.EnabledAndDynamic: true } || Stop is { ColorMarker.EnabledAndDynamic: true };
+
+            [JsonIgnore]
+            public bool AnyDynamicMarkers => AnyDynamicColors || Stop is { AnyDynamicMarkers: true };
+
+            public void Init()
+            {
+                Train?.Init();
+                Stop?.Init();
+
+                var validColors = new List<Color>();
+
+                foreach (var hexColor in RouteColors)
+                {
+                    if (ColorUtility.TryParseHtmlString(hexColor, out var color))
+                    {
+                        validColors.Add(color);
+                    }
+                    else
+                    {
+                        LogError($"Invalid HTML color code in config: {color}");
+                    }
+                }
+
+                ValidDynamicColors = validColors.ToArray();
+            }
+        }
+
+        [JsonObject(MemberSerialization.OptIn)]
         private class Configuration : SerializableConfiguration
         {
             [JsonProperty("PlayHornForNearbyPlayersInRadius")]
+            private float DeprecatedPlayHornForNearbyPlayersInRadius { set => PlayHornForNearbyPlayersInRadius = value; }
+
+            [JsonProperty("Play horn for nearby players in radius")]
             public float PlayHornForNearbyPlayersInRadius = 0f;
 
             [JsonProperty("DefaultSpeed")]
+            private string DeprecatedDefaultSpeed { set => DefaultSpeed = value; }
+
+            [JsonProperty("Default speed")]
             public string DefaultSpeed = EngineSpeeds.Fwd_Hi.ToString();
 
             [JsonProperty("DefaultTrackSelection")]
+            private string DeprecatedDefaultTrackSelection { set => DefaultTrackSelection = value; }
+
+            [JsonProperty("Default track selection")]
             public string DefaultTrackSelection = TrackSelection.Left.ToString();
 
             [JsonProperty("BulldozeOffendingWorkcarts")]
+            private bool DeprecatedBulldozeOffendingWorkcarts { set => BulldozeOffendingWorkcarts = value; }
+
+            [JsonProperty("Bulldoze offending workcarts")]
             public bool BulldozeOffendingWorkcarts = false;
 
             [JsonProperty("DestroyBarricadesInstantly")]
+            private bool DeprecatedDestroyBarricadesInstantly { set => DestroyBarricadesInstantly = value; }
+
+            [JsonProperty("Destroy barricades instantly")]
             public bool DestroyBarricadesInstantly = false;
 
             [JsonProperty("EnableMapTriggers")]
+            private bool DeprecatedEnableMapTriggers { set => EnableMapTriggers = value; }
+
+            [JsonProperty("Enable map triggers")]
             public bool EnableMapTriggers = true;
 
             [JsonProperty("EnableTunnelTriggers")]
+            private Dictionary<string, bool> DeprecatedEnableTunnelTriggers { set => EnableTunnelTriggers = value; }
+
+            [JsonProperty("Enable tunnel triggers")]
             public Dictionary<string, bool> EnableTunnelTriggers = new()
             {
                 [TunnelType.TrainStation.ToString()] = false,
@@ -5245,15 +5998,42 @@ namespace Oxide.Plugins
             };
 
             [JsonProperty("MaxConductors")]
+            private int DeprecatedMaxConductors { set => MaxConductors = value; }
+
+            [JsonProperty("Max conductors")]
             public int MaxConductors = -1;
 
             [JsonProperty("SpawnTriggersRespectConductorLimit")]
-            public bool SpawnTriggersRespectConductorLimit = false;
+            private bool DeprecatedSpawnTriggersRespectConductorLimit { set => SpawnTriggersRespectConductorLimit = value; }
+
+            [JsonProperty("Spawn triggers respect conductor limit")]
+            public bool SpawnTriggersRespectConductorLimit;
 
             [JsonProperty("DisableDefaultTunnelWorkcartSpawnPoints")]
-            public bool DisableDefaultTunnelWorkcartSpawnPoints = false;
+            private bool DeprecatedDisableDefaultTunnelWorkcartSpawnPoints { set => DisableDefaultTunnelWorkcartSpawnPoints = value; }
+
+            [JsonProperty("Disable default tunnel workcart spawn points")]
+            public bool DisableDefaultTunnelWorkcartSpawnPoints;
+
+            [JsonProperty("Trigger display distance")]
+            public float TriggerDisplayDistance = 150;
+
+            [JsonProperty("Debug show crate markers", DefaultValueHandling = DefaultValueHandling.Ignore)]
+            public bool DebugShowCrateMarkers;
+
+            [JsonProperty("Debug show collisions markers", DefaultValueHandling = DefaultValueHandling.Ignore)]
+            public bool DebugShowCollisionsMarkers;
+
+            [JsonProperty("Debug enable global broadcast", DefaultValueHandling = DefaultValueHandling.Ignore)]
+            public bool DebugEnableGlobalBroadcast;
+
+            [JsonProperty("Debug dynamic routes", DefaultValueHandling = DefaultValueHandling.Ignore)]
+            public bool DebugDynamicRoutes;
 
             [JsonProperty("ConductorOutfit")]
+            private ItemInfo[] DeprecatedConductorOutfit { set => ConductorOutfit = value; }
+
+            [JsonProperty("Conductor outfit")]
             public ItemInfo[] ConductorOutfit =
             {
                 new() { ShortName = "jumpsuit.suit" },
@@ -5262,28 +6042,35 @@ namespace Oxide.Plugins
             };
 
             [JsonProperty("ColoredMapMarker")]
-            public GenericMarkerOptions GenericMapMarker = new();
+            private ColorMarkerOptions DeprecatedColorMapMarker { set => MapMarkers.Train.ColorMarker = value; }
 
             [JsonProperty("VendingMapMarker")]
-            public VendingMarkerOptions VendingMapMarker = new();
+            private VendingMarkerOptions DeprecatedVendingMapMarker { set => MapMarkers.Train.VendingMarker = value; }
 
             [JsonProperty("MapMarkerUpdateInveralSeconds")]
-            private float DeprecatedMapMarkerUpdateIntervalSeconds { set => MapMarkerUpdateIntervalSeconds = value; }
+            private float DeprecatedMapMarkerUpdateInteralSeconds { set => MapMarkers.Train.UpdateIntervalSeconds = value; }
 
             [JsonProperty("MapMarkerUpdateIntervalSeconds")]
-            public float MapMarkerUpdateIntervalSeconds = 5.0f;
+            private float DeprecatedMapMarkerUpdateIntervalSeconds { set => MapMarkers.Train.UpdateIntervalSeconds = value; }
+
+            [JsonProperty("Map markers")]
+            public MarkerOptions MapMarkers = new();
 
             [JsonProperty("TriggerDisplayDistance")]
-            public float TriggerDisplayDistance = 150;
+            private float DeprecatedTriggerDisplayDistance { set => TriggerDisplayDistance = value; }
 
-            [JsonProperty("DebugShowCollisionsMarkers", DefaultValueHandling = DefaultValueHandling.Ignore)]
-            public bool DebugShowCollisionsMarkers;
+            public void Init()
+            {
+                MapMarkers?.Init();
 
-            [JsonProperty("DebugShowCrateMarkers", DefaultValueHandling = DefaultValueHandling.Ignore)]
-            public bool DebugShowCrateMarkers;
-
-            [JsonProperty("DebugEnableGlobalBroadcast", DefaultValueHandling = DefaultValueHandling.Ignore)]
-            public bool DebugEnableGlobalBroadcast;
+                if (ConductorOutfit != null)
+                {
+                    foreach (var itemInfo in ConductorOutfit)
+                    {
+                        itemInfo.Init();
+                    }
+                }
+            }
 
             public bool IsTunnelTypeEnabled(TunnelType tunnelType)
             {
