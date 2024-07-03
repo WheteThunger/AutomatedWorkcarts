@@ -13,6 +13,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
+using Unity.Collections.LowLevel.Unsafe;
 using UnityEngine;
 using static BaseEntity;
 using static TrainCar;
@@ -40,6 +41,8 @@ namespace Oxide.Plugins
         private const string CrateMarkerPrefab = "assets/prefabs/tools/map/cratemarker.prefab";
         private const string BradleyExplosionEffectPrefab = "assets/prefabs/npc/m2bradley/effects/bradley_explosion.prefab";
 
+        private const float RearTrainCarSpawnDistanceOffset = 2f;
+
         private static readonly FieldInfo TrainCouplingIsValidField = typeof(TrainCoupling).GetField("isValid", BindingFlags.NonPublic | BindingFlags.Instance)
             ?? typeof(TrainCoupling).GetField("isValid", BindingFlags.Public | BindingFlags.Instance);
 
@@ -62,6 +65,8 @@ namespace Oxide.Plugins
 
         private Coroutine _startupCoroutine;
         private Timer _showStatesTimer;
+        private VirtualTrain _virtualTrain;
+        private int _virtualTrainStep;
 
         public AutomatedWorkcarts()
         {
@@ -300,7 +305,8 @@ namespace Oxide.Plugins
                 && !triggerData.Destroy
                 && triggerData.GetTrackSelectionInstruction() == null
                 && triggerData.GetSpeedInstruction() == null
-                && triggerData.GetDirectionInstruction() == null)
+                && triggerData.GetDirectionInstruction() == null
+                && !triggerData.Intersection)
             {
                 triggerData.Speed = EngineSpeeds.Zero.ToString();
             }
@@ -482,9 +488,10 @@ namespace Oxide.Plugins
             var rotation = Quaternion.Euler(basePlayer.viewAngles);
             var needsRespawn = false;
 
-            if (triggerInstance.Spline != null)
+            if (triggerInstance.Splines.Count > 0)
             {
-                rotation = GetSplineTangentRotation(triggerInstance.Spline, triggerInstance.DistanceOnSpline, rotation);
+                var (spline, distance) = triggerInstance.ClosestSpline;
+                rotation = GetSplineTangentRotation(spline, distance, rotation);
 
                 if (Vector3.Dot(triggerInstance.SpawnRotation * Vector3.forward, rotation * Vector3.forward) < 0)
                 {
@@ -680,6 +687,271 @@ namespace Oxide.Plugins
 
                 _trainManager.ShowNearbyTrainStates(basePlayer, maxDistanceSquared, drawDuration);
             });
+        }
+
+        private static bool AreSplinesConnected(TrainTrackSpline spline, TrainTrackSpline otherSpline)
+        {
+            foreach (var trackInfo in spline.nextTracks)
+            {
+                if (trackInfo.track == otherSpline)
+                    return true;
+            }
+
+            foreach (var trackInfo in spline.prevTracks)
+            {
+                if (trackInfo.track == otherSpline)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static float DetermineIntersectionBufferDistance(VirtualTrain virtualTrain, VirtualTrain otherVirtualTrain, float preferredDistance, float increment, Ddraw? debugDrawer = null)
+        {
+            float offset;
+            var previousDistance = 0f;
+
+            for (offset = increment; offset < IntersectionController.MaxBufferDistance; offset += increment)
+            {
+                if (!virtualTrain.TryMoveDistance(increment, out var position))
+                {
+                    LogWarning("Could not move anymore A");
+                    break;
+                }
+
+                if (!otherVirtualTrain.TryMoveDistance(increment, out var otherPosition))
+                {
+                    LogWarning("Could not move anymore B");
+                    break;
+                }
+
+                debugDrawer?.Sphere(position, 0.25f, color: Color.green);
+                debugDrawer?.Sphere(otherPosition, 0.25f, color: Color.green);
+
+                var distance = Vector3.Distance(position, otherPosition);
+                if (distance >= preferredDistance)
+                {
+                    if (debugDrawer.HasValue)
+                    {
+                        debugDrawer.Value.Sphere(position, 0.5f, color: Color.red);
+                        debugDrawer.Value.Sphere(otherPosition, 0.5f, color: Color.red);
+                        debugDrawer.Value.Line(position + Vector3.up / 2, otherPosition + Vector3.up / 2, color: Color.green);
+                        debugDrawer.Value.Text(Vector3.Lerp(position, otherPosition, 0.5f) + Vector3.up, $"{(position - otherPosition).magnitude:f2}m", color: Color.red);
+                        debugDrawer.Value.Text(position, $"{offset}m", color: Color.white);
+                        debugDrawer.Value.Text(otherPosition, $"{offset}m", color: Color.white);
+                    }
+
+                    return offset;
+                }
+
+                // When both paths converge on a single spline, don't need to continue.
+                if (virtualTrain.Spline == otherVirtualTrain.Spline
+                    || offset >= IntersectionController.MinBufferDistance && AreFloatsClose(distance, previousDistance))
+                {
+                    debugDrawer?.Sphere(position, 0.5f, color: Color.red);
+                    break;
+                }
+
+                previousDistance = distance;
+            }
+
+            return offset;
+        }
+
+        private static void GetIntersectionBufferDistance(List<SplineInfo> splineInfoList, Dictionary<TrainTrackSpline, (float, float)> splineDistances, Ddraw? debugDrawer = null)
+        {
+            var increment = 2f;
+            var preferredDistance = IntersectionController.PreferredSeparationDistance;
+            // var highestOffset = 0f;
+
+            foreach (var (spline, distance) in splineInfoList)
+            {
+                var splineDirection = GetSplineTangentDirection(spline, distance);
+
+                var virtualTrain = new VirtualTrain
+                {
+                    TrackSelection = TrackSelection.Default,
+                    Distance = distance,
+                    Ascending = true,
+                    Spline = spline,
+                    Throttle = EngineSpeeds.Fwd_Hi,
+                    IsForward = true,
+                };
+
+                var highestOffsetAscending = 0f;
+                var highestOffsetDescending = 0f;
+
+                foreach (var (otherSpline, otherDistance) in splineInfoList)
+                {
+                    if (spline == otherSpline || AreSplinesConnected(spline, otherSpline))
+                        continue;
+
+                    virtualTrain.Ascending = true;
+                    virtualTrain.Distance = distance;
+
+                    var otherVirtualTrain = new VirtualTrain
+                    {
+                        TrackSelection = TrackSelection.Default,
+                        Distance = otherDistance,
+                        Ascending = Vector3.Dot(splineDirection, GetSplineTangentDirection(otherSpline, otherDistance)) > 0,
+                        Spline = otherSpline,
+                        Throttle = EngineSpeeds.Fwd_Hi,
+                        IsForward = true,
+                    };
+
+                    var offsetAscending = Mathf.Abs(DetermineIntersectionBufferDistance(virtualTrain, otherVirtualTrain, preferredDistance, increment, debugDrawer));
+
+                    virtualTrain.Ascending = false;
+                    otherVirtualTrain.Ascending = !otherVirtualTrain.Ascending;
+                    var offsetDescending = Mathf.Abs(DetermineIntersectionBufferDistance(virtualTrain, otherVirtualTrain, preferredDistance, increment, debugDrawer));
+
+                    highestOffsetAscending = Mathf.Max(highestOffsetAscending, offsetAscending);
+                    highestOffsetDescending = Mathf.Max(highestOffsetDescending, offsetDescending);
+                    // offsetAscending = Mathf.Clamp(offsetAscending, IntersectionController.MinBufferDistance, IntersectionController.MaxBufferDistance);
+                    // offsetDescending = Mathf.Clamp(offsetDescending, IntersectionController.MinBufferDistance, IntersectionController.MaxBufferDistance);
+                    // splineDistances[spline] = (offsetAscending, offsetDescending);
+                    // splineDistances[otherSpline] = (offsetAscending, offsetDescending);
+                }
+
+                if (highestOffsetAscending != 0 && highestOffsetDescending != 0)
+                {
+                    highestOffsetAscending = Mathf.Clamp(highestOffsetAscending, IntersectionController.MinBufferDistance, IntersectionController.MaxBufferDistance);
+                    highestOffsetDescending = Mathf.Clamp(highestOffsetDescending, IntersectionController.MinBufferDistance, IntersectionController.MaxBufferDistance);
+                    // Invert
+                    splineDistances[spline] = (highestOffsetDescending, highestOffsetAscending);
+                }
+            }
+
+            // return highestOffset;
+        }
+
+        [Command("aw.debugintersection")]
+        private void CommandIntersect(IPlayer player, string cmd, string[] args)
+        {
+            if (player.IsServer
+                || !VerifyPermission(player, PermissionManageTriggers)
+                || !VerifyAnyTriggers(player))
+                return;
+
+            var basePlayer = player.Object as BasePlayer;
+            var triggerInstance = _triggerManager.FindNearestTriggerWhereAiming(basePlayer);
+            if (triggerInstance == null)
+                return;
+
+            if (!triggerInstance.TriggerData.Intersection)
+                return;
+
+            if (triggerInstance.Splines.Count < 2)
+                return;
+
+            var drawer = new Ddraw(basePlayer, 10f, Color.cyan);
+            var list = new Dictionary<TrainTrackSpline, (float, float)>();
+            GetIntersectionBufferDistance(triggerInstance.Splines, list, drawer);
+            // player.Reply($"Distance: {distance}");
+
+            // var firstSpline = triggerInstance.Splines[0];
+            // var secondSpline = triggerInstance.Splines[1];
+            //
+            // var firstDirection = GetSplineTangentDirection(firstSpline.Spline, firstSpline.Distance);
+            // var secondDirection = GetSplineTangentDirection(secondSpline.Spline, secondSpline.Distance);
+            //
+            // var ascending = Vector3.Dot(firstDirection, secondDirection) > 0;
+            // player.Reply($"ascending: {ascending}");
+            //
+            // var firstAdapter = new SplineAdapter(firstSpline.Spline, firstSpline.Distance, ascending: true);
+            // var secondAdapter = new SplineAdapter(secondSpline.Spline, secondSpline.Distance, ascending: ascending);
+
+            // for (var i = 0; i < 10; i++)
+            // {
+            //     var increment = i * 1;
+            //     var firstPos = firstAdapter.GetRelativePosition(firstSpline.Distance, increment);
+            //     var secondPos = secondAdapter.GetRelativePosition(secondSpline.Distance, increment);
+            //
+            //     drawer.Sphere(firstPos, 0.25f);
+            //     drawer.Sphere(secondPos, 0.25f);
+            // }
+        }
+
+        [Command("aw.virtual.start", "aw.virtual.continue")]
+        private void CommandVirtualTrain(IPlayer player, string cmd, string[] args)
+        {
+            if (player.IsServer
+                || !VerifyPermission(player, PermissionManageTriggers))
+                return;
+
+            var basePlayer = player.Object as BasePlayer;
+            var triggerDisplayDuration = 5f;
+            var color = Color.green;
+            var drawer = new Ddraw(basePlayer, triggerDisplayDuration, color);
+
+            if (cmd.EndsWith("start"))
+            {
+                if (!TryGetTrack(basePlayer, out var spline, out var splineDistance))
+                    return;
+
+                var trackPosition = spline.GetPosition(splineDistance);
+
+                _virtualTrainStep = 0;
+                _virtualTrain = new VirtualTrain
+                {
+                    TrackSelection = TrackSelection.Left,
+                    Distance = splineDistance,
+                    Ascending = spline.IsForward(basePlayer.eyes.HeadForward(), splineDistance),
+                    IsForward = true,
+                    TriggerManager = _triggerManager,
+                    Throttle = EngineSpeeds.Fwd_Hi,
+                    HitTriggers = true,
+                    HitTrackUsers = true,
+                    Spline = spline,
+                };
+
+                foreach (var arg in args)
+                {
+                    var argLower = arg.ToLower();
+
+                    if (argLower == "left")
+                    {
+                        _virtualTrain.TrackSelection = TrackSelection.Left;
+                    }
+                    else if (argLower == "right")
+                    {
+                        _virtualTrain.TrackSelection = TrackSelection.Right;
+                    }
+                    else if (argLower == "default")
+                    {
+                        _virtualTrain.TrackSelection = TrackSelection.Default;
+                    }
+                    else if (argLower == "rev")
+                    {
+                        _virtualTrain.IsForward = false;
+                        _virtualTrain.Throttle = EngineSpeeds.Rev_Hi;
+                    }
+                    else if (argLower.StartsWith("@"))
+                    {
+                        _virtualTrain.RouteName = arg[1..];
+                    }
+                }
+
+                var rotation = GetSplineTangentRotation(spline, splineDistance, basePlayer.eyes.rotation);
+
+                var drawPos = trackPosition + Vector3.up;
+                var lineStart = drawPos + rotation * Vector3.back;
+                var lineEnd = drawPos + rotation * Vector3.forward;
+
+                var message = $"Start\nAscending: {_virtualTrain.Ascending}\nIsForward: {_virtualTrain.IsForward}\n{_virtualTrain.Throttle}\n{_virtualTrain.TrackSelection}";
+                drawer.Text(drawPos, message);
+                drawer.Arrow(lineStart, lineEnd, 0.25f);
+                return;
+            }
+
+            if (cmd.EndsWith("continue"))
+            {
+                _virtualTrainStep++;
+
+                var result = _virtualTrain.TryMove(out var distanceTraveled, out _, out _, maxDistance: 10);
+                player.Reply($"Move result: {result} | {distanceTraveled}m");
+                drawer.Text(_virtualTrain.Spline.GetPosition(_virtualTrain.Distance) + Vector3.up, _virtualTrainStep.ToString());
+            }
         }
 
         #endregion
@@ -886,6 +1158,12 @@ namespace Oxide.Plugins
                 return true;
             }
 
+            if (argLower.StartsWith("intersection"))
+            {
+                triggerData.Intersection = true;
+                return true;
+            }
+
             if (argLower.StartsWith("destroy"))
             {
                 triggerData.Destroy = true;
@@ -1081,28 +1359,39 @@ namespace Oxide.Plugins
             }
         }
 
-        private static TrainEngine GetLeadTrainEngine(CompleteTrain completeTrain)
+        private static T GetLeadTrainCar<T>(CompleteTrain completeTrain) where T : TrainCar
         {
+            if (completeTrain == null)
+                return null;
+
             if (completeTrain.PrimaryTrainCar == completeTrain.trainCars[0])
             {
                 for (var i = 0; i < completeTrain.trainCars.Count; i++)
                 {
-                    var trainEngine = completeTrain.trainCars[i] as TrainEngine;
-                    if ((object)trainEngine != null)
-                        return trainEngine;
+                    if (completeTrain.trainCars[i] is T trainCarOfType)
+                        return trainCarOfType;
                 }
             }
             else
             {
                 for (var i = completeTrain.trainCars.Count - 1; i >= 0; i--)
                 {
-                    var trainEngine = completeTrain.trainCars[i] as TrainEngine;
-                    if ((object)trainEngine != null)
-                        return trainEngine;
+                    if (completeTrain.trainCars[i] is T trainCarOfType)
+                        return trainCarOfType;
                 }
             }
 
             return null;
+        }
+
+        private static TrainCar GetLeadTrainCar(CompleteTrain completeTrain)
+        {
+            return GetLeadTrainCar<TrainCar>(completeTrain);
+        }
+
+        private static TrainEngine GetLeadTrainEngine(CompleteTrain completeTrain)
+        {
+            return GetLeadTrainCar<TrainEngine>(completeTrain);
         }
 
         private static TrainEngine GetLeadTrainEngine(TrainCar trainCar)
@@ -1112,6 +1401,32 @@ namespace Oxide.Plugins
                 return trainEngine;
 
             return GetLeadTrainEngine(trainCar.completeTrain);
+        }
+
+        private static TrainCar GetRearTrainCar(CompleteTrain completeTrain)
+        {
+            return GetLeadTrainCar(completeTrain) == completeTrain.trainCars[0]
+                ? completeTrain.trainCars[^1]
+                : completeTrain.trainCars[0];
+        }
+
+        private static float GetMinDistanceFromTrain(CompleteTrain completeTrain, Vector3 position)
+        {
+            var frontPosition = completeTrain.frontCollisionTrigger.transform.position;
+            var rearPosition = completeTrain.rearCollisionTrigger.transform.position;
+            return Math.Min(Vector3.Distance(position, frontPosition), Vector3.Distance(position, rearPosition));
+        }
+
+        private static float GetTrainLength(CompleteTrain completeTrain)
+        {
+            var length = 0f;
+
+            foreach (var trainCar in completeTrain.trainCars)
+            {
+                length += 2 * trainCar.bounds.extents.z;
+            }
+
+            return length;
         }
 
         private static void DetermineTrainCarOrientations(TrainCar trainCar, Vector3 forward, TrainCar otherTrainCar, out TrainCar forwardTrainCar)
@@ -1185,10 +1500,10 @@ namespace Oxide.Plugins
         private static float GetSplineDistance(TrainTrackSpline spline, Vector3 position)
         {
             spline.GetDistance(position, 1, out var distanceOnSpline);
-            return distanceOnSpline;
+            return Mathf.Clamp(distanceOnSpline, 0, spline.GetLength());
         }
 
-        private static TrainCar AddTrainCar(TrainCar frontTrainCar, TrainCarPrefab frontTrainCarPrefab, TrainCarPrefab trainCarPrefab, TrackSelection trackSelection)
+        private static TrainCar AddTrainCar(ref VirtualTrain virtualTrain, TrainCar frontTrainCar, TrainCarPrefab frontTrainCarPrefab, TrainCarPrefab trainCarPrefab, TrackSelection trackSelection)
         {
             var rearCouplingTransform = frontTrainCarPrefab.Reverse
                 ? frontTrainCar.frontCoupling
@@ -1197,40 +1512,18 @@ namespace Oxide.Plugins
             if (rearCouplingTransform == null)
                 return null;
 
-            var rearWheelPos = frontTrainCarPrefab.Reverse
-                ? frontTrainCar.GetFrontWheelPos()
-                : frontTrainCar.GetRearWheelPos();
+            var finalDistance = GetTrainCarCouplingOffsetZ(trainCarPrefab, front: true)
+                                + GetTrainCarCouplingOffsetZ(frontTrainCarPrefab, front: false);
 
-            var wheelToRearCouplingDistance = Math.Abs(rearWheelPos.z - rearCouplingTransform.position.z);
-
-            var rearSpline = frontTrainCarPrefab.Reverse
-                ? frontTrainCar.FrontTrackSection
-                : frontTrainCar.RearTrackSection;
-
-            var rearWheelDistanceOnSpline = GetSplineDistance(rearSpline, rearWheelPos);
-
-            var frontTrainCarForward = frontTrainCarPrefab.Reverse
-                ? -frontTrainCar.transform.forward
-                : frontTrainCar.transform.forward;
-
-            var askerIsForward = rearSpline.IsForward(frontTrainCarForward, rearWheelDistanceOnSpline);
-            var splineInfo = new SplineInfo
-            {
-                Spline = rearSpline,
-                Distance = rearWheelDistanceOnSpline,
-                Ascending = !askerIsForward,
-                IsForward = askerIsForward,
-            };
+            if (!virtualTrain.TryMoveDistance(finalDistance, out var finalPosition))
+                return null;
 
             // Spawn the train slightly farther away so it has space. It will be moved forward after spawn.
-            var spawnDistanceOffset = 2;
+            var virtualTrainCopy = virtualTrain;
+            if (!virtualTrainCopy.TryMoveDistance(RearTrainCarSpawnDistanceOffset, out var spawnPosition))
+                return null;
 
-            var finalDistance = wheelToRearCouplingDistance + GetTrainCarFrontCouplingOffsetZ(trainCarPrefab);
-
-            var finalPosition = GetPositionAlongTrack(splineInfo, finalDistance, trackSelection, out var finalSplineInfo);
-
-            var resultPosition = GetPositionAlongTrack(finalSplineInfo, spawnDistanceOffset, trackSelection, out var spawnSplineInfo);
-            var resultRotation = GetSplineTangentRotation(spawnSplineInfo.Spline, spawnSplineInfo.Distance, frontTrainCar.transform.rotation);
+            var resultRotation = GetSplineTangentRotation(virtualTrain.Spline, virtualTrain.Distance, frontTrainCar.transform.rotation);
 
             if (trainCarPrefab.Reverse != frontTrainCarPrefab.Reverse)
             {
@@ -1239,7 +1532,7 @@ namespace Oxide.Plugins
 
             // TODO: Fix issue where workcarts jump on start, when first two are both reverse
 
-            var rearTrainCar = SpawnTrainCar(trainCarPrefab.PrefabPath, resultPosition, resultRotation);
+            var rearTrainCar = SpawnTrainCar(trainCarPrefab.PrefabPath, spawnPosition, resultRotation);
             if (rearTrainCar != null)
             {
                 if (rearTrainCar.FrontTrackSection == null)
@@ -1251,7 +1544,7 @@ namespace Oxide.Plugins
                 rearTrainCar.MoveFrontWheelsAlongTrackSpline(
                     rearTrainCar.FrontTrackSection,
                     rearTrainCar.FrontWheelSplineDist,
-                    spawnDistanceOffset,
+                    RearTrainCarSpawnDistanceOffset,
                     rearTrainCar.RearTrackSection != rearTrainCar.FrontTrackSection ? rearTrainCar.RearTrackSection : null,
                     trackSelection
                 );
@@ -1272,18 +1565,25 @@ namespace Oxide.Plugins
             return rearTrainCar;
         }
 
-        private static float GetTrainCarFrontCouplingOffsetZ(TrainCarPrefab trainCarPrefab)
+        private static float GetTrainCarCouplingOffsetZ(TrainCarPrefab trainCarPrefab, bool front)
         {
             var prefab = GameManager.server.FindPrefab(trainCarPrefab.PrefabPath)?.GetComponent<TrainCar>();
             if (prefab == null)
                 return 0;
 
-            return trainCarPrefab.Reverse
+            return Mathf.Abs(front == trainCarPrefab.Reverse
                 ? prefab.rearCoupling.localPosition.z
-                : prefab.frontCoupling.localPosition.z;
+                : prefab.frontCoupling.localPosition.z);
         }
 
-        private static ConnectedTrackInfo GetAdjacentTrackInfo(TrainTrackSpline spline, TrackSelection selection, bool isAscending = true, bool askerIsForward = true)
+        private static Vector3 GetTrainCarCouplingPosition(TrainCar trainCar, bool front)
+        {
+            return front == trainCar.GetTrackSpeed() > 0
+                ? trainCar.frontCoupling.transform.position
+                : trainCar.rearCoupling.transform.position;
+        }
+
+        private static ConnectedTrackInfo GetAdjacentTrackInfo(TrainTrackSpline spline, TrackSelection trackSelection, bool isAscending = true, bool askerIsForward = true)
         {
             var trackOptions = isAscending
                 ? spline.nextTracks
@@ -1295,21 +1595,27 @@ namespace Oxide.Plugins
             if (trackOptions.Count == 1)
                 return trackOptions[0];
 
-            switch (selection)
+            switch (trackSelection)
             {
                 case TrackSelection.Left:
-                    return isAscending == askerIsForward
+                    return askerIsForward
                         ? trackOptions.FirstOrDefault()
                         : trackOptions.LastOrDefault();
 
                 case TrackSelection.Right:
-                    return isAscending == askerIsForward
+                    return askerIsForward
                         ? trackOptions.LastOrDefault()
                         : trackOptions.FirstOrDefault();
 
                 default:
                     return trackOptions[isAscending ? spline.straightestNextIndex : spline.straightestPrevIndex];
             }
+        }
+
+        private static Vector3 GetSplineTangentDirection(TrainTrackSpline spline, float distanceOnSpline)
+        {
+            spline.GetPointAndTangentCubicHermiteWorld(distanceOnSpline, out var direction);
+            return direction;
         }
 
         private static Quaternion GetSplineTangentRotation(TrainTrackSpline spline, float distanceOnSpline, Quaternion approximateRotation)
@@ -1377,63 +1683,6 @@ namespace Oxide.Plugins
                 return true;
 
             return false;
-        }
-
-        private static Vector3 GetPositionAlongTrack(SplineInfo splineInfo, float desiredDistance, TrackSelection trackSelection, out SplineInfo resultSplineInfo, out float remainingDistance)
-        {
-            resultSplineInfo = splineInfo;
-            remainingDistance = desiredDistance;
-
-            var i = 0;
-
-            while (remainingDistance > 0)
-            {
-                if (i++ > 1000)
-                {
-                    LogError("Something is wrong. Please contact the plugin developer.");
-                    return Vector3.zero;
-                }
-
-                var splineLength = resultSplineInfo.Spline.GetLength();
-                var newDistanceOnSpline = resultSplineInfo.Ascending
-                    ? resultSplineInfo.Distance + remainingDistance
-                    : resultSplineInfo.Distance - remainingDistance;
-
-                remainingDistance -= resultSplineInfo.Ascending
-                    ? splineLength - resultSplineInfo.Distance
-                    : resultSplineInfo.Distance;
-
-                if (newDistanceOnSpline >= 0 && newDistanceOnSpline <= splineLength)
-                {
-                    // Reached desired distance.
-                    resultSplineInfo.Distance = newDistanceOnSpline;
-                    return resultSplineInfo.Spline.GetPosition(resultSplineInfo.Distance);
-                }
-
-                var adjacentTrackInfo = GetAdjacentTrackInfo(resultSplineInfo.Spline, trackSelection, resultSplineInfo.Ascending, resultSplineInfo.IsForward);
-                if (adjacentTrackInfo == null)
-                {
-                    // Track is a dead end.
-                    resultSplineInfo.Distance = resultSplineInfo.Ascending ? splineLength : 0;
-                    return resultSplineInfo.Spline.GetPosition(resultSplineInfo.Distance);
-                }
-
-                if (adjacentTrackInfo.orientation == TrackOrientation.Reverse)
-                {
-                    resultSplineInfo.Ascending = !resultSplineInfo.Ascending;
-                    resultSplineInfo.IsForward = !resultSplineInfo.IsForward;
-                }
-
-                resultSplineInfo.Spline = adjacentTrackInfo.track;
-                resultSplineInfo.Distance = resultSplineInfo.Ascending ? 0 : resultSplineInfo.Spline.GetLength();
-            }
-
-            return Vector3.zero;
-        }
-
-        private static Vector3 GetPositionAlongTrack(SplineInfo splineInfo, float desiredDistance, TrackSelection trackSelection, out SplineInfo resultSplineInfo)
-        {
-            return GetPositionAlongTrack(splineInfo, desiredDistance, trackSelection, out resultSplineInfo, out var remainingDistance);
         }
 
         private static bool IsTrainOwned(TrainCar trainCar)
@@ -1505,15 +1754,21 @@ namespace Oxide.Plugins
             return false;
         }
 
-        private static bool TryGetTrackPosition(BasePlayer player, out Vector3 trackPosition, float maxDistance = 30)
+        private static bool TryGetTrack(BasePlayer player, out TrainTrackSpline spline, out float distanceResult, float maxDistance = 30)
         {
             if (!TryGetHitPosition(player, out var hitPosition, maxDistance))
             {
-                trackPosition = Vector3.zero;
+                spline = null;
+                distanceResult = 0;
                 return false;
             }
 
-            if (!TryFindTrackNear(hitPosition, 5, out var spline, out var distanceResult))
+            return TryFindTrackNear(hitPosition, 5, out spline, out distanceResult);
+        }
+
+        private static bool TryGetTrackPosition(BasePlayer player, out Vector3 trackPosition, float maxDistance = 30)
+        {
+            if (!TryGetTrack(player, out var spline, out var distanceResult, maxDistance))
             {
                 trackPosition = Vector3.zero;
                 return false;
@@ -1792,82 +2047,499 @@ namespace Oxide.Plugins
             }
         }
 
-        private struct SplineInfo
+        private struct Ddraw
         {
-            public TrainTrackSpline Spline;
-            public float Distance;
-            public bool Ascending;
-            public bool IsForward;
-
-            public override string ToString()
+            public static void Sphere(BasePlayer player, float duration, Color color, Vector3 origin, float radius)
             {
-                return $"{nameof(SplineInfo)}(Distance: {Distance}, Ascending: {Ascending}, IsForward: {IsForward})";
+                player.SendConsoleCommand("ddraw.sphere", duration, color, origin, radius);
+            }
+
+            public static void Line(BasePlayer player, float duration, Color color, Vector3 origin, Vector3 target)
+            {
+                player.SendConsoleCommand("ddraw.line", duration, color, origin, target);
+            }
+
+            public static void Arrow(BasePlayer player, float duration, Color color, Vector3 origin, Vector3 target, float headSize)
+            {
+                player.SendConsoleCommand("ddraw.arrow", duration, color, origin, target, headSize);
+            }
+
+            public static void Arrow(BasePlayer player, float duration, Color color, Vector3 center, Quaternion rotation, float length, float headSize)
+            {
+                var origin = center - rotation * Vector3.forward * length;
+                var target = center + rotation * Vector3.forward * length;
+                Arrow(player, duration, color, origin, target, headSize);
+            }
+
+            public static void Text(BasePlayer player, float duration, Color color, Vector3 origin, string text)
+            {
+                player.SendConsoleCommand("ddraw.text", duration, color, origin, text);
+            }
+
+            private BasePlayer _player;
+            private Color _color;
+            private float _duration;
+
+            public Ddraw(BasePlayer player, float duration, Color color)
+            {
+                _player = player;
+                _color = color;
+                _duration = duration;
+            }
+
+            public void Sphere(Vector3 position, float radius, float? duration = null, Color? color = null)
+            {
+                Sphere(_player, duration ?? _duration, color ?? _color, position, radius);
+            }
+
+            public void Line(Vector3 origin, Vector3 target, float? duration = null, Color? color = null)
+            {
+                Line(_player, duration ?? _duration, color ?? _color, origin, target);
+            }
+
+            public void Arrow(Vector3 origin, Vector3 target, float headSize, float? duration = null, Color? color = null)
+            {
+                Arrow(_player, duration ?? _duration, color ?? _color, origin, target, headSize);
+            }
+
+            public void Arrow(Vector3 center, Quaternion rotation, float length, float headSize, float? duration = null, Color? color = null)
+            {
+                Arrow(_player, duration ?? _duration, color ?? _color, center, rotation, length, headSize);
+            }
+
+            public void Text(Vector3 position, string text, float? duration = null, Color? color = null)
+            {
+                Text(_player, duration ?? _duration, color ?? _color, position, text);
             }
         }
 
-        private struct SplineIterator
+        private static void FindSplines(Vector3 position, List<SplineInfo> triggerPositionList, float maxDistance = 2f)
         {
-            public SplineInfo SplineInfo;
-            public EngineSpeeds Throttle;
-            public TrackSelection TrackSelection;
-            public readonly string RouteName;
-            private readonly TriggerManager _triggerManager;
+            var colliderList = Facepunch.Pool.GetList<Collider>();
+            GamePhysics.OverlapSphere(position, 3, colliderList, Layers.Mask.World);
 
-            public SplineIterator(SplineInfo splineInfo, EngineSpeeds throttle, TrackSelection trackSelection, string routeName, TriggerManager triggerManager)
+            foreach (var collider in colliderList)
             {
-                SplineInfo = splineInfo;
-                Throttle = throttle;
-                TrackSelection = trackSelection;
-                RouteName = routeName;
-                _triggerManager = triggerManager;
+                var splineList = Facepunch.Pool.GetList<TrainTrackSpline>();
+                collider.GetComponentsInParent(false, splineList);
+
+                foreach (var spline in splineList)
+                {
+                    var distanceOnSpline = GetSplineDistance(spline, position);
+                    var distanceFromTrigger = Vector3.Distance(spline.GetPosition(distanceOnSpline), position);
+                    if (distanceFromTrigger > maxDistance)
+                        continue;
+
+                    var triggerPosition = new SplineInfo(spline, distanceOnSpline);
+                    if (triggerPositionList.Contains(triggerPosition))
+                        continue;
+
+                    triggerPositionList.Add(triggerPosition);
+                }
+
+                Facepunch.Pool.FreeList(ref splineList);
             }
 
-            public bool MoveNext(HashSet<BaseTriggerInstance> visitedTriggers)
+            Facepunch.Pool.FreeList(ref colliderList);
+        }
+
+        private static bool AreFloatsClose(float a, float b, float tolerance = 0.001f)
+        {
+            return Math.Abs(a - b) <= tolerance;
+        }
+
+        // Types of results: hit next trigger, hit next spline, stopped mid spline, no next spline
+        private struct MoveResult
+        {
+            public static MoveResult ForTrigger(BaseTriggerInstance triggerInstance, float distance)
             {
-                var triggerList = _triggerManager.GetTriggersForSpline(SplineInfo.Spline);
+                return new MoveResult
+                {
+                    Reason = InterruptReason.ReachedTrigger,
+                    Distance = distance,
+                    TriggerInstance = triggerInstance,
+                };
+            }
+
+            public static MoveResult ForTrackUser(ITrainTrackUser trackUser, float distance)
+            {
+                return new MoveResult
+                {
+                    Reason = InterruptReason.ReachedTrackUser,
+                    Distance = distance,
+                    TrackUser = trackUser,
+                };
+            }
+
+            public static MoveResult ForMaxDistance(float distance)
+            {
+                return new MoveResult
+                {
+                    Reason = InterruptReason.ReachedMaxDistance,
+                    Distance = distance,
+                };
+            }
+
+            public static MoveResult ForEndOfSpline(float distance)
+            {
+                return new MoveResult
+                {
+                    Reason = InterruptReason.ReachedEndOfSpline,
+                    Distance = distance,
+                };
+            }
+
+            public enum InterruptReason
+            {
+                ReachedTrigger,
+                ReachedTrackUser,
+                ReachedMaxDistance,
+                ReachedEndOfSpline,
+            }
+
+            public InterruptReason Reason;
+            public float Distance;
+            public BaseTriggerInstance TriggerInstance;
+            public ITrainTrackUser TrackUser;
+        }
+
+        private struct FindTriggerRequest
+        {
+            public bool Ascending;
+            public float Distance;
+            public BaseTriggerInstance IgnoreTrigger;
+            public float MaxDistance;
+            public string RouteName;
+            public TrainTrackSpline Spline;
+            public List<BaseTriggerInstance> TriggerList;
+        }
+
+        private static BaseTriggerInstance FindTrigger(FindTriggerRequest request, out float distanceOnSpline)
+        {
+            // TODO: Reduce duplication
+            // var maxDistanceOnSpline = AddDistance(maxDistance > 0 ? maxDistance : Spline.GetLength());
+            distanceOnSpline = 0;
+
+            if (request.Ascending)
+            {
+                foreach (var triggerInstance in request.TriggerList)
+                {
+                    if (triggerInstance == request.IgnoreTrigger)
+                        continue;
+
+                    distanceOnSpline = triggerInstance.GetDistanceOnSpline(request.Spline);
+
+                    // Trigger is too early to consider, we are already past it.
+                    if (distanceOnSpline < request.Distance)
+                        continue;
+
+                    // Trigger is too far ahead to consider.
+                    if (request.MaxDistance > 0 && distanceOnSpline > request.Distance + request.MaxDistance)
+                        continue;
+
+                    // Trigger is for a different route.
+                    if (!triggerInstance.TriggerData.MatchesRoute(request.RouteName))
+                        continue;
+
+                    // A trigger was reached, so return it.
+                    return triggerInstance;
+                }
+            }
+            else
+            {
+                for (var i = request.TriggerList.Count - 1; i >= 0; i--)
+                {
+                    var triggerInstance = request.TriggerList[i];
+                    if (triggerInstance == request.IgnoreTrigger)
+                        continue;
+
+                    distanceOnSpline = triggerInstance.GetDistanceOnSpline(request.Spline);
+
+                    // Trigger is too early to consider, we are already past it.
+                    if (distanceOnSpline > request.Distance)
+                        continue;
+
+                    // Trigger is too far ahead to consider.
+                    if (request.MaxDistance > 0 && distanceOnSpline < request.Distance - request.MaxDistance)
+                        continue;
+
+                    // Trigger is for a different route.
+                    if (!triggerInstance.TriggerData.MatchesRoute(request.RouteName))
+                        continue;
+
+                    // A trigger was reached, so return it.
+                    return triggerInstance;
+                }
+            }
+
+            return null;
+        }
+
+        private struct MoveRequest
+        {
+            public bool Ascending;
+            public float Distance;
+            public bool HitTriggers;
+            public bool HitTrackUsers;
+            public float MaxDistance;
+            public string RouteName;
+            public TrainTrackSpline Spline;
+            public TriggerManager TriggerManager;
+            public BaseTriggerInstance IgnoreTrigger;
+            public ITrainTrackUser IgnoreTrackUser;
+        }
+
+        private static BaseTriggerInstance FindTrigger(ref MoveRequest request, out float distance)
+        {
+            if (request.HitTriggers)
+            {
+                var triggerList = request.TriggerManager.GetTriggersForSpline(request.Spline);
                 if (triggerList != null)
                 {
-                    if (SplineInfo.Ascending)
+                    return FindTrigger(new FindTriggerRequest
                     {
-                        foreach (var triggerInstance in triggerList)
-                        {
-                            if (triggerInstance.DistanceOnSpline < SplineInfo.Distance
-                                || !triggerInstance.TriggerData.MatchesRoute(RouteName))
-                                continue;
-
-                            visitedTriggers.Add(triggerInstance);
-                            HandleTrigger(triggerInstance);
-                        }
-                    }
-                    else
-                    {
-                        for (var i = triggerList.Count - 1; i >= 0; i--)
-                        {
-                            var triggerInstance = triggerList[i];
-                            if (triggerInstance.DistanceOnSpline > SplineInfo.Distance
-                                || !triggerInstance.TriggerData.MatchesRoute(RouteName))
-                                continue;
-
-                            visitedTriggers.Add(triggerInstance);
-                            HandleTrigger(triggerInstance);
-                        }
-                    }
+                        Ascending = request.Ascending,
+                        Distance = request.Distance,
+                        IgnoreTrigger = request.IgnoreTrigger,
+                        MaxDistance = request.MaxDistance,
+                        RouteName = request.RouteName,
+                        Spline = request.Spline,
+                        TriggerList = triggerList,
+                    }, out distance);
                 }
+            }
 
-                var adjacentTrackInfo = GetAdjacentTrackInfo(SplineInfo.Spline, TrackSelection, SplineInfo.Ascending, SplineInfo.IsForward);
-                if (adjacentTrackInfo == null)
-                    return false;
+            distance = 0;
+            return null;
+        }
 
-                if (adjacentTrackInfo.orientation == TrackOrientation.Reverse)
+        private static ITrainTrackUser FindTrackUser(ref MoveRequest request, out float trackUserDistanceOnSpline)
+        {
+            trackUserDistanceOnSpline = 0;
+
+            if (!request.HitTrackUsers
+                || request.Spline.trackUsers.Count == 0)
+                return null;
+
+            var trackUserList = Facepunch.Pool.GetList<(ITrainTrackUser, float)>();
+            foreach (var trackUser in request.Spline.trackUsers)
+            {
+                trackUserList.Add((trackUser, GetSplineDistance(request.Spline, trackUser.Position)));
+            }
+
+            trackUserList.Sort((a, b) => a.Item2.CompareTo(b.Item2));
+
+            var trackUserToReturn = (ITrainTrackUser)null;
+
+            if (request.Ascending)
+            {
+                foreach (var (trackUser, distanceOnSpline) in trackUserList)
                 {
-                    SplineInfo.Ascending = !SplineInfo.Ascending;
-                    SplineInfo.IsForward = !SplineInfo.IsForward;
+                    if (trackUser == request.IgnoreTrackUser)
+                        continue;
+
+                    // Trigger is too early to consider, we are already past it.
+                    if (distanceOnSpline < request.Distance)
+                        continue;
+
+                    // Trigger is too far ahead to consider.
+                    if (request.MaxDistance > 0 && distanceOnSpline > request.Distance + request.MaxDistance)
+                        continue;
+
+                    trackUserDistanceOnSpline = distanceOnSpline;
+                    trackUserToReturn = trackUser;
+                    break;
+                }
+            }
+            else
+            {
+                for (var i = trackUserList.Count - 1; i >= 0; i--)
+                {
+                    var (trackUser, distanceOnSpline) = trackUserList[i];
+                    if (trackUser == request.IgnoreTrackUser)
+                        continue;
+
+                    // Trigger is too early to consider, we are already past it.
+                    if (distanceOnSpline > request.Distance)
+                        continue;
+
+                    // Trigger is too far ahead to consider.
+                    if (request.MaxDistance > 0 && distanceOnSpline < request.Distance - request.MaxDistance)
+                        continue;
+
+                    trackUserDistanceOnSpline = distanceOnSpline;
+                    trackUserToReturn = trackUser;
+                    break;
+                }
+            }
+
+            Facepunch.Pool.FreeList(ref trackUserList);
+            return trackUserToReturn;
+        }
+
+        // Move to next trigger, spline, track user, or to desired position.
+        private static MoveResult RequestMove(MoveRequest request)
+        {
+            var triggerInstance = FindTrigger(ref request, out var triggerDistance);
+            var trackUser = FindTrackUser(ref request, out var trackUserDistance);
+
+            if (triggerInstance is not null && trackUser is not null)
+            {
+                if (request.Ascending)
+                {
+                    return triggerDistance < trackUserDistance
+                        ? MoveResult.ForTrigger(triggerInstance, triggerDistance)
+                        : MoveResult.ForTrackUser(trackUser, trackUserDistance);
                 }
 
-                SplineInfo.Spline = adjacentTrackInfo.track;
-                SplineInfo.Distance = SplineInfo.Ascending ? 0 : SplineInfo.Spline.GetLength();
+                return triggerDistance > trackUserDistance
+                    ? MoveResult.ForTrigger(triggerInstance, triggerDistance)
+                    : MoveResult.ForTrackUser(trackUser, trackUserDistance);
+            }
 
-                return true;
+            if (triggerInstance is not null)
+                return MoveResult.ForTrigger(triggerInstance, triggerDistance);
+
+            if (trackUser is not null)
+                return MoveResult.ForTrackUser(trackUser, trackUserDistance);
+
+            if (request.MaxDistance > 0)
+            {
+                var finalDistance = request.Ascending ? request.Distance + request.MaxDistance : request.Distance - request.MaxDistance;
+                var canEndMove = request.Ascending ? finalDistance <= request.Spline.GetLength() : finalDistance >= 0;
+
+                if (canEndMove)
+                    return MoveResult.ForMaxDistance(finalDistance);
+            }
+
+            return MoveResult.ForEndOfSpline(request.Ascending ? request.Spline.GetLength() : 0);
+        }
+
+        private struct VirtualTrain
+        {
+            public static VirtualTrain FromTrainController(TrainController trainController, bool hitTriggers = true)
+            {
+                var primaryTrainEngine = trainController.PrimaryTrainEngine;
+                var spline = primaryTrainEngine.FrontTrackSection;
+                var distanceOnSpline = primaryTrainEngine.FrontWheelSplineDist;
+                var throttle = trainController.DepartureThrottle;
+
+                return new VirtualTrain
+                {
+                    Ascending = spline.IsForward(trainController.Forward, distanceOnSpline),
+                    Distance = distanceOnSpline,
+                    HitTriggers = hitTriggers,
+                    IsForward = EngineThrottleToNumber(throttle) >= 0,
+                    RouteName = trainController.RouteName,
+                    Spline = spline,
+                    Throttle = throttle,
+                    TrackSelection = primaryTrainEngine.localTrackSelection,
+                    TriggerManager = trainController.Plugin._triggerManager,
+                };
+            }
+
+            public bool Ascending;
+            public float Distance;
+            public bool HitTriggers;
+            public bool HitTrackUsers;
+            public bool IsForward;
+            public BaseTriggerInstance LastTrigger;
+            public ITrainTrackUser LastTrackUser;
+            public string RouteName;
+            public TrainTrackSpline Spline;
+            public EngineSpeeds Throttle;
+            public TrackSelection TrackSelection;
+            public TriggerManager TriggerManager;
+
+            public override string ToString()
+            {
+                return $"{nameof(VirtualTrain)}(Ascending: {Ascending} | Distance: {Distance} | IsForward: {IsForward} | TrackSelection: {TrackSelection})";
+            }
+
+            public bool TryMove(out float distanceTraveled, out BaseTriggerInstance triggerInstance, out ITrainTrackUser trackUser, float maxDistance = 0)
+            {
+                var moveResult = RequestMove(new MoveRequest
+                {
+                     Ascending = Ascending,
+                     Distance = Distance,
+                     HitTriggers = HitTriggers,
+                     HitTrackUsers = HitTrackUsers,
+                     IgnoreTrigger = LastTrigger,
+                     IgnoreTrackUser = LastTrackUser,
+                     MaxDistance = maxDistance,
+                     RouteName = RouteName,
+                     Spline = Spline,
+                     TriggerManager = TriggerManager,
+                });
+
+                triggerInstance = moveResult.TriggerInstance;
+                trackUser = moveResult.TrackUser;
+                distanceTraveled = Mathf.Abs(moveResult.Distance - Distance);
+
+                switch (moveResult.Reason)
+                {
+                    case MoveResult.InterruptReason.ReachedTrigger:
+                        LastTrigger = moveResult.TriggerInstance;
+                        Distance = moveResult.Distance;
+                        HandleTrigger(moveResult.TriggerInstance);
+                        return true;
+
+                    case MoveResult.InterruptReason.ReachedTrackUser:
+                        LastTrackUser = moveResult.TrackUser;
+                        Distance = moveResult.Distance;
+                        return true;
+
+                    case MoveResult.InterruptReason.ReachedMaxDistance:
+                        Distance = moveResult.Distance;
+                        return true;
+
+                    case MoveResult.InterruptReason.ReachedEndOfSpline:
+                        var nextTrackInfo = GetAdjacentTrackInfo(Spline, TrackSelection, Ascending, IsForward);
+                        if (nextTrackInfo == null)
+                        {
+                            Distance = moveResult.Distance;
+                            return false;
+                        }
+
+                        if (nextTrackInfo.orientation == TrackOrientation.Reverse)
+                        {
+                            Ascending = !Ascending;
+                        }
+
+                        Spline = nextTrackInfo.track;
+                        Distance = Ascending ? 0 : Spline.GetLength();
+                        return true;
+
+                    default:
+                        LogError($"Unimplemented {nameof(MoveResult.InterruptReason)}: {moveResult}");
+                        return false;
+                }
+            }
+
+            public bool TryMoveDistance(float desiredDistance, out Vector3 position)
+            {
+                var remainingDistance = desiredDistance;
+
+                var maxIterations = 10;
+                for (var i = 0; i < maxIterations; i++)
+                {
+                    if (!TryMove(out var distanceTraveled, out _, out _, maxDistance: remainingDistance))
+                    {
+                        position = default;
+                        return false;
+                    }
+
+                    remainingDistance -= distanceTraveled;
+                    if (remainingDistance <= 0.001f)
+                    {
+                        position = Spline.GetPosition(Distance);
+                        return true;
+                    }
+                }
+
+                LogError($"Failed to move virtual train {desiredDistance}m after {maxIterations} iterations.");
+                position = default;
+                return false;
             }
 
             private void HandleTrigger(BaseTriggerInstance triggerInstance)
@@ -1884,7 +2556,7 @@ namespace Oxide.Plugins
                 var newThrottleNumber = EngineThrottleToNumber(Throttle);
                 if ((throttleNumber ^ newThrottleNumber) < 0)
                 {
-                    SplineInfo.Ascending = !SplineInfo.Ascending;
+                    Ascending = !Ascending;
                 }
             }
         }
@@ -1975,57 +2647,55 @@ namespace Oxide.Plugins
                 }
             }
 
-            private List<BaseTriggerInstance> DetermineRoute(SplineInfo splineInfo, EngineSpeeds throttle, TrackSelection trackSelection, string routeName)
+            private List<BaseTriggerInstance> DetermineRoute(VirtualTrain virtualTrain)
             {
                 var debug = _config.DebugDynamicRoutes;
                 if (debug)
                 {
-                    LogWarning($"[Dynamic Routes] Starting analysis: {splineInfo}");
+                    LogWarning($"[Dynamic Routes] Starting analysis: {virtualTrain}");
                 }
 
                 _reusableSplineList.Clear();
-                _reusableSplineList.Add(splineInfo.Spline);
+                _reusableSplineList.Add(virtualTrain.Spline);
                 _reusableTriggerList.Clear();
-
-                var iterator = new SplineIterator(splineInfo, throttle, trackSelection, routeName, _triggerManager);
 
                 for (var i = 0; i < 1000; i++)
                 {
                     _reusableTriggerListForSpline.Clear();
 
-                    if (!iterator.MoveNext(_reusableTriggerListForSpline))
+                    if (!virtualTrain.TryMove(out _, out var visitedTrigger, out _))
                     {
                         if (debug)
                         {
-                            LogWarning($"[Dynamic Routes] Failed to get next spline info at iteration {i} after {_reusableSplineList.Count} splines and {_reusableTriggerList.Count} triggers");
+                            LogWarning($"[Dynamic Routes] Virtual train has reached end of track at iteration {i} after {_reusableSplineList.Count} splines and {_reusableTriggerList.Count} triggers");
                         }
 
                         break;
                     }
 
-                    _reusableSplineList.Add(iterator.SplineInfo.Spline);
+                    if (visitedTrigger?.TriggerData.Destroy == true)
+                        break;
 
-                    foreach (var visitedTrigger in _reusableTriggerListForSpline)
+                    _reusableSplineList.Add(virtualTrain.Spline);
+
+                    if (visitedTrigger == null || _reusableTriggerList.Add(visitedTrigger))
+                        continue;
+
+                    // Found a repeat trigger
+                    var triggerForClosure = visitedTrigger;
+                    var finalTriggerList = _reusableTriggerList
+                        .SkipWhile(t => t != triggerForClosure)
+                        .OrderBy(t => t.WorldPosition.y)
+                        .ThenBy(t => t.WorldPosition.x)
+                        .ThenBy(t => t.WorldPosition.z)
+                        .ToList();
+
+                    if (debug)
                     {
-                        if (_reusableTriggerList.Add(visitedTrigger))
-                            continue;
-
-                        // Found a repeat trigger
-                        var triggerForClosure = visitedTrigger;
-                        var finalTriggerList = _reusableTriggerList
-                            .SkipWhile(t => t != triggerForClosure)
-                            .OrderBy(t => t.WorldPosition.y)
-                            .ThenBy(t => t.WorldPosition.x)
-                            .ThenBy(t => t.WorldPosition.z)
-                            .ToList();
-
-                        if (debug)
-                        {
-                            LogWarning($"[Dynamic Routes] Found circular route after {_reusableSplineList.Count} splines and {_reusableTriggerList.Count} triggers ({finalTriggerList.Count} unique).");
-                        }
-
-                        return finalTriggerList;
+                        LogWarning($"[Dynamic Routes] Found circular route after {_reusableSplineList.Count} splines and {_reusableTriggerList.Count} triggers ({finalTriggerList.Count} unique).");
                     }
+
+                    return finalTriggerList;
                 }
 
                 if (debug)
@@ -2042,24 +2712,6 @@ namespace Oxide.Plugins
                 return null;
             }
 
-            private List<BaseTriggerInstance> DetermineRoute(TrainController trainController)
-            {
-                var primaryTrainEngine = trainController.PrimaryTrainEngine;
-                var distanceOnSpline = primaryTrainEngine.FrontWheelSplineDist;
-                var spline = primaryTrainEngine.FrontTrackSection;
-                var throttle = trainController.DepartureThrottle;
-
-                var splineInfo = new SplineInfo
-                {
-                    Spline = spline,
-                    Ascending = spline.IsForward(trainController.Forward, distanceOnSpline),
-                    Distance = distanceOnSpline,
-                    IsForward = EngineThrottleToNumber(throttle) >= 0,
-                };
-
-                return DetermineRoute(splineInfo, throttle, primaryTrainEngine.localTrackSelection, trainController.RouteName);
-            }
-
             private IEnumerator DetermineAllRoutes()
             {
                 // Don't waste time computing routes if the routine is frequently restarting due to changes.
@@ -2073,7 +2725,7 @@ namespace Oxide.Plugins
 
                 foreach (var trainController in trainControllerList)
                 {
-                    var triggerList = DetermineRoute(trainController);
+                    var triggerList = DetermineRoute(VirtualTrain.FromTrainController(trainController));
                     if (triggerList != null)
                     {
                         var route = FindMatchingRoute(triggerList);
@@ -2639,12 +3291,22 @@ namespace Oxide.Plugins
             return EngineThrottleFromNumber(ApplyDirection(EngineThrottleToNumber(throttle), directionInstruction));
         }
 
-        private static EngineSpeeds ApplySpeedAndDirection(EngineSpeeds currentThrottle, SpeedInstruction? speedInstruction, DirectionInstruction? directionInstruction)
+        private static EngineSpeeds ApplySpeedAndDirection(EngineSpeeds currentThrottle, SpeedInstruction? speedInstruction, DirectionInstruction? directionInstruction = null)
         {
             var throttleNumber = EngineThrottleToNumber(currentThrottle);
             throttleNumber = ApplySpeed(throttleNumber, speedInstruction);
             throttleNumber = ApplyDirection(throttleNumber, directionInstruction);
             return EngineThrottleFromNumber(throttleNumber);
+        }
+
+        private static TrackSelection SwapTrackSelection(TrackSelection trackSelection)
+        {
+            return trackSelection switch
+            {
+                TrackSelection.Left => TrackSelection.Right,
+                TrackSelection.Right => TrackSelection.Left,
+                _ => trackSelection,
+            };
         }
 
         private static TrackSelection ApplyTrackSelection(TrackSelection trackSelection, TrackSelectionInstruction? trackSelectionInstruction)
@@ -2661,11 +3323,7 @@ namespace Oxide.Plugins
                     return TrackSelection.Right;
 
                 case TrackSelectionInstruction.Swap:
-                    return trackSelection == TrackSelection.Left
-                        ? TrackSelection.Right
-                        : trackSelection == TrackSelection.Right
-                        ? TrackSelection.Left
-                        : trackSelection;
+                    return SwapTrackSelection(trackSelection);
 
                 default:
                     return trackSelection;
@@ -2705,6 +3363,26 @@ namespace Oxide.Plugins
                 }
 
                 _plugin.TrackEnd();
+            }
+
+            public bool ContainsTrain(TrainController trainController)
+            {
+                if (entityContents == null || entityContents.Count == 0)
+                    return false;
+
+                foreach (var entity in entityContents)
+                {
+                    if (entity is not TrainCar trainCar)
+                        continue;
+
+                    if (_trainManager.GetTrainController(trainCar) == trainController)
+                    {
+                        // LogWarning("Contains train, don't mitigate");
+                        return true;
+                    }
+                }
+
+                return false;
             }
 
             private bool ShouldAutomateTrain(TrainCar trainCar, out bool shouldCount)
@@ -2794,6 +3472,9 @@ namespace Oxide.Plugins
 
             [JsonProperty("Brake", DefaultValueHandling = DefaultValueHandling.Ignore)]
             public bool Brake;
+
+            [JsonProperty("Intersection", DefaultValueHandling = DefaultValueHandling.Ignore)]
+            public bool Intersection;
 
             [JsonProperty("Destroy", DefaultValueHandling = DefaultValueHandling.Ignore)]
             public bool Destroy;
@@ -2985,6 +3666,7 @@ namespace Oxide.Plugins
                 Chance = triggerData.Chance;
                 TrainCars = triggerData.TrainCars;
                 Commands = triggerData.Commands;
+                Intersection = triggerData.Intersection;
             }
 
             public TriggerData Clone()
@@ -3007,6 +3689,9 @@ namespace Oxide.Plugins
 
                 if (AddConductor)
                     return Color.cyan;
+
+                if (Intersection)
+                    return Color.HSVToRGB(0.9f, 1, 1);
 
                 var speedInstruction = GetSpeedInstruction();
                 var directionInstruction = GetDirectionInstruction();
@@ -3099,6 +3784,240 @@ namespace Oxide.Plugins
 
         #region Trigger Instances
 
+        private readonly struct SplineInfo : IEquatable<SplineInfo>
+        {
+            public readonly TrainTrackSpline Spline;
+            public readonly float Distance;
+
+            public SplineInfo(TrainTrackSpline spline, float distance)
+            {
+                Spline = spline;
+                Distance = distance;
+            }
+
+            public bool Equals(SplineInfo other)
+            {
+                return other.Spline == Spline
+                    && other.Distance == Distance;
+            }
+
+            public void Deconstruct(out TrainTrackSpline spline, out float distance)
+            {
+                spline = Spline;
+                distance = Distance;
+            }
+        }
+
+        private class IntersectionController
+        {
+            private struct ApproachingTrain : IEquatable<ApproachingTrain>
+            {
+                public TrainController TrainController;
+                public TrainTrackSpline Spline;
+                public bool Ascending;
+
+                public ApproachingTrain(TrainController trainController, TrainTrackSpline spline, bool ascending)
+                {
+                    TrainController = trainController;
+                    Spline = spline;
+                    Ascending = ascending;
+                }
+
+                public bool Equals(ApproachingTrain other)
+                {
+                    return TrainController == other.TrainController
+                        && Spline == other.Spline
+                        && Ascending == other.Ascending;
+                }
+
+                public static implicit operator TrainController(ApproachingTrain approachingTrain)
+                {
+                    return approachingTrain.TrainController;
+                }
+            }
+
+            public const float LookAheadDistance = 100f;
+            public const float PreferredSeparationDistance = 6f;
+            public const float MinBufferDistance = 10f;
+            public const float MaxBufferDistance = 40f;
+            public const float StopAdditionalClearance = 2f;
+            private const float DeadLockMitigationFrequencySeconds = 15f;
+
+            private readonly BaseTriggerInstance _triggerInstance;
+            private List<ApproachingTrain> _trainControllerList = new();
+            public Dictionary<TrainTrackSpline, (float, float)> SplineDistances { get; } = new();
+            private Comparison<ApproachingTrain> _compareTrainDistances;
+            private TimeSince _timeSinceDeadLockMitigationAttempt;
+
+            public TrainController OwnerTrainController => GetOwnerTrainController();
+            public bool RecentlyAttemptedDeadLockMitigation => _timeSinceDeadLockMitigationAttempt <= DeadLockMitigationFrequencySeconds;
+
+            public IntersectionController(BaseTriggerInstance triggerInstance)
+            {
+                _triggerInstance = triggerInstance;
+                _compareTrainDistances = CompareTrainDistances;
+                UpdateBufferDistance();
+            }
+
+            public bool QueueTrain(TrainController trainController, TrainTrackSpline spline, bool ascending)
+            {
+                var approachingTrain = new ApproachingTrain(trainController, spline, ascending);
+
+                if (!_trainControllerList.Contains(approachingTrain))
+                {
+                    _trainControllerList.Add(approachingTrain);
+                }
+
+                return OwnerTrainController == trainController;
+            }
+
+            public void RemoveTrain(TrainController trainController)
+            {
+                for (var i = 0; i < _trainControllerList.Count; i++)
+                {
+                    var approachingTrain = _trainControllerList[i];
+                    if (approachingTrain.TrainController == trainController)
+                    {
+                        _trainControllerList.RemoveAt(i);
+                        return;
+                    }
+                }
+            }
+
+            public int GetNumQueued()
+            {
+                CleanQueue();
+                return _trainControllerList.Count;
+            }
+
+            public float GetBufferDistance(TrainTrackSpline spline, bool ascending)
+            {
+                if (!SplineDistances.TryGetValue(spline, out var distances))
+                    return MinBufferDistance;
+
+                var (ascendingDistance, descendingDistance) = distances;
+                return ascending ? ascendingDistance : descendingDistance;
+            }
+
+            public float GetBufferDistance(TrainController trainController, bool invert = false)
+            {
+                foreach (var approachingTrain in _trainControllerList)
+                {
+                    if (approachingTrain.TrainController == trainController)
+                        return GetBufferDistance(approachingTrain.Spline, invert ? !approachingTrain.Ascending : approachingTrain.Ascending);
+                }
+
+                return 0;
+            }
+
+            public void TryMitigateDeadLock()
+            {
+                if (_timeSinceDeadLockMitigationAttempt < 5f)
+                    return;
+
+                var aggressive = _timeSinceDeadLockMitigationAttempt < DeadLockMitigationFrequencySeconds;
+
+                // if (RecentlyAttemptedDeadLockMitigation)
+                //     return;
+
+                var ownerTrainController = _trainControllerList.FirstOrDefault();
+                if (_triggerInstance.ContainsTrain(ownerTrainController))
+                    return;
+
+                // var basePlayer = BasePlayer.activePlayerList.FirstOrDefault();
+                // if (basePlayer != null)
+                // {
+                //     basePlayer.SendConsoleCommand("ddraw.text", DeadLockMitigationFrequencySeconds, Color.green, _triggerInstance.WorldPosition + Vector3.up, "Re-ordered trains");
+                // }
+
+                // TODO: Prefer train is spaced away from the intersection
+
+                var forwardBufferDistance = GetBufferDistance(ownerTrainController);
+                var rearBufferDistance = GetBufferDistance(ownerTrainController, invert: true);
+                if (IsLeadTrainCarWithinDistance(ownerTrainController, _triggerInstance.WorldPosition, forwardBufferDistance)
+                    || IsRearTrainWithinDistance(ownerTrainController, _triggerInstance.WorldPosition, rearBufferDistance))
+                {
+                    if (!aggressive)
+                    {
+                        LogWarning("Aggressively mitigating deadlock");
+                        return;
+                    }
+                }
+                else
+                {
+                    LogWarning("Switching intersection to mitigate deadlock");
+                }
+
+                ownerTrainController.TrainController.SwitchIntersection(_triggerInstance, this);
+
+                var randomTrainIndex = UnityEngine.Random.Range(1, _trainControllerList.Count);
+                var randomTrainController = _trainControllerList[randomTrainIndex];
+                _trainControllerList.RemoveAt(randomTrainIndex);
+                _trainControllerList.Insert(0, randomTrainController);
+                _timeSinceDeadLockMitigationAttempt = 0;
+            }
+
+            public void UpdateBufferDistance()
+            {
+                // BufferDistance = Mathf.Clamp(, MinBufferDistance, MaxBufferDistance);
+                SplineDistances.Clear();
+                GetIntersectionBufferDistance(_triggerInstance.Splines, SplineDistances);
+            }
+
+            private bool ShouldEjectTrainController(ApproachingTrain approachingTrain)
+            {
+                var trainController = approachingTrain.TrainController;
+                if (trainController?.PrimaryTrainEngine == null)
+                    return true;
+
+                // Don't eject the train if it's queued for this intersection.
+                if ((trainController.TrainState as QueuedState)?.TriggerInstance == _triggerInstance)
+                    return false;
+
+                var bufferDistance = GetBufferDistance(approachingTrain.Spline, approachingTrain.Ascending);
+                var movedPast = trainController.HasMovedPastPosition(_triggerInstance.WorldPosition, bufferDistance);
+                if (movedPast)
+                {
+                    // LogWarning("movedPast");
+                }
+
+                return movedPast;
+            }
+
+            private int CompareTrainDistances(ApproachingTrain a, ApproachingTrain b)
+            {
+                var triggerPosition = _triggerInstance.TriggerPosition;
+                return a.TrainController.MinDistanceFrom(triggerPosition).CompareTo(b.TrainController.MinDistanceFrom(triggerPosition));
+            }
+
+            private void CleanQueue()
+            {
+                while (_trainControllerList.Count > 0)
+                {
+                    if (ShouldEjectTrainController(_trainControllerList.FirstOrDefault()))
+                    {
+                        _trainControllerList.RemoveAt(0);
+                        continue;
+                    }
+
+                    break;
+                }
+            }
+
+            private TrainController GetOwnerTrainController()
+            {
+                CleanQueue();
+
+                if (!RecentlyAttemptedDeadLockMitigation)
+                {
+                    _trainControllerList.Sort(_compareTrainDistances);
+                    CleanQueue();
+                }
+
+                return _trainControllerList.FirstOrDefault();
+            }
+        }
+
         private abstract class BaseTriggerInstance
         {
             private const int MaxSpawnedTrains = 1;
@@ -3106,36 +4025,45 @@ namespace Oxide.Plugins
 
             protected static readonly Vector3 TriggerOffset = new(0, 0.9f, 0);
 
-            public TrainManager TrainManager { get; }
+            public readonly AutomatedWorkcarts Plugin;
             public TriggerData TriggerData { get; }
-            public TrainTrackSpline Spline { get; private set; }
-            public float DistanceOnSpline { get; private set; }
             public MapMarkerGenericRadius ColorMarker { get; private set; }
+            public IntersectionController IntersectionController { get; private set; }
+
+            public List<SplineInfo> Splines { get; } = new();
 
             public abstract Vector3 WorldPosition { get; }
             protected abstract Quaternion WorldRotation { get; }
 
+            public SplineInfo ClosestSpline => Splines.FirstOrDefault();
             public Vector3 TriggerPosition => WorldPosition + TriggerOffset;
-            public Quaternion SpawnRotation =>
-                Spline != null
-                    ? GetSplineTangentRotation(Spline, DistanceOnSpline, WorldRotation)
-                    : WorldRotation;
 
-            private AutomatedWorkcarts _plugin;
+            public Quaternion SpawnRotation
+            {
+                get
+                {
+                    if (Splines.Count == 0)
+                        return WorldRotation;
+
+                    var (spline, distance) = ClosestSpline;
+                    return GetSplineTangentRotation(spline, distance, WorldRotation);
+                }
+            }
+
             private GameObject _gameObject;
             private TrainTrigger _trainTrigger;
-            private List<TrainCar> _spawnedTrains;
+            private List<TrainCar> _spawnedTrainCars;
             private VendingMachineMapMarker _vendingMarker;
             private Action _spawnTrainTracked;
 
-            private Configuration _config => _plugin._config;
-            private TriggerManager _triggerManager => _plugin._triggerManager;
-            private RouteManager _routeManager => _plugin._routeManager;
+            public TrainManager TrainManager => Plugin._trainManager;
+            private Configuration _config => Plugin._config;
+            private TriggerManager _triggerManager => Plugin._triggerManager;
+            private RouteManager _routeManager => Plugin._routeManager;
 
-            protected BaseTriggerInstance(AutomatedWorkcarts plugin, TrainManager trainManager, TriggerData triggerData)
+            protected BaseTriggerInstance(AutomatedWorkcarts plugin, TriggerData triggerData)
             {
-                _plugin = plugin;
-                TrainManager = trainManager;
+                Plugin = plugin;
                 TriggerData = triggerData;
             }
 
@@ -3155,6 +4083,20 @@ namespace Oxide.Plugins
                 else if (transform.rotation != WorldRotation)
                 {
                     transform.rotation = WorldRotation;
+                    changed = true;
+                }
+
+                if (TriggerData.Intersection)
+                {
+                    if (IntersectionController == null)
+                    {
+                        IntersectionController = new IntersectionController(this);
+                        changed = true;
+                    }
+                }
+                else if (IntersectionController != null)
+                {
+                    IntersectionController = null;
                     changed = true;
                 }
 
@@ -3192,7 +4134,7 @@ namespace Oxide.Plugins
 
             public void HandleTrainCarKilled(TrainCar trainCar)
             {
-                _spawnedTrains?.Remove(trainCar);
+                _spawnedTrainCars?.Remove(trainCar);
             }
 
             public bool Destroy()
@@ -3200,20 +4142,37 @@ namespace Oxide.Plugins
                 if (_gameObject == null)
                     return false;
 
-                UnregisterSpline();
+                IntersectionController = null;
+                UnregisterSplines();
                 KillTrains();
                 StopSpawningTrains();
                 EntityUtils.KillEntity(ColorMarker);
                 EntityUtils.KillEntity(_vendingMarker);
                 UnityEngine.Object.Destroy(_gameObject);
                 _gameObject = null;
-                Spline = null;
+                Splines.Clear();
                 return true;
             }
 
             public bool DidSpawnTrain(TrainCar trainCar)
             {
-                return _spawnedTrains?.Contains(trainCar) ?? false;
+                return _spawnedTrainCars?.Contains(trainCar) ?? false;
+            }
+
+            public float GetDistanceOnSpline(TrainTrackSpline targetSpline)
+            {
+                foreach (var (spline, distance) in Splines)
+                {
+                    if (spline == targetSpline)
+                        return distance;
+                }
+
+                return 0;
+            }
+
+            public bool ContainsTrain(TrainController trainController)
+            {
+                return _trainTrigger.ContainsTrain(trainController);
             }
 
             private bool IsMapMarkerEligible()
@@ -3246,50 +4205,43 @@ namespace Oxide.Plugins
                 var sphereCollider = _gameObject.AddComponent<SphereCollider>();
                 sphereCollider.isTrigger = true;
                 sphereCollider.radius = TrainTrigger.TriggerRadius;
-                sphereCollider.gameObject.layer = TrainTrigger.TriggerLayer;
+                _gameObject.layer = TrainTrigger.TriggerLayer;
 
-                _trainTrigger = TrainTrigger.AddToGameObject(_plugin, _gameObject, TrainManager, TriggerData, this);
+                _trainTrigger = TrainTrigger.AddToGameObject(Plugin, _gameObject, TrainManager, TriggerData, this);
                 return true;
             }
 
-            private void RegisterSpline()
+            private void RegisterSplines()
             {
-                if (Spline == null)
-                    return;
-
-                _triggerManager.RegisterTriggerWithSpline(this, Spline);
+                foreach (var (spline, _) in Splines)
+                {
+                    _triggerManager.RegisterTriggerWithSpline(this, spline);
+                }
             }
 
-            private void UnregisterSpline()
+            private void UnregisterSplines()
             {
-                if (Spline == null)
-                    return;
+                foreach (var (spline, _) in Splines)
+                {
+                    _triggerManager.UnregisterTriggerFromSpline(this, spline);
+                }
 
-                _triggerManager.UnregisterTriggerFromSpline(this, Spline);
+                Splines.Clear();
             }
 
             private void Move()
             {
-                UnregisterSpline();
-
+                UnregisterSplines();
                 _gameObject.transform.SetPositionAndRotation(TriggerPosition, WorldRotation);
-
-                if (TryFindTrackNear(WorldPosition, 2, out var spline, out var distanceOnSpline))
-                {
-                    Spline = spline;
-                    DistanceOnSpline = distanceOnSpline;
-                    RegisterSpline();
-                }
-                else
-                {
-                    Spline = null;
-                    DistanceOnSpline = 0;
-                }
+                FindSplines(WorldPosition, Splines);
+                Splines.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+                RegisterSplines();
+                IntersectionController?.UpdateBufferDistance();
             }
 
             private bool StartSpawningTrains()
             {
-                _spawnedTrains ??= new List<TrainCar>(MaxSpawnedTrains);
+                _spawnedTrainCars ??= new List<TrainCar>(MaxSpawnedTrains);
                 _spawnTrainTracked ??= SpawnTrainTracked;
 
                 if (_trainTrigger.IsInvoking(_spawnTrainTracked))
@@ -3312,16 +4264,18 @@ namespace Oxide.Plugins
 
             private bool SpawnTrain()
             {
-                if (_spawnedTrains.Count >= MaxSpawnedTrains)
+                if (_spawnedTrainCars.Count >= MaxSpawnedTrains)
                     return false;
 
-                if (Spline == null)
+                if (Splines.Count == 0)
                     return false;
 
                 var trackSelection = ApplyTrackSelection(TrackSelection.Default, TriggerData.GetTrackSelectionInstruction());
 
                 TrainCar previousTrainCar = null;
                 TrainCarPrefab previousTrainCarPrefab = null;
+
+                var virtualTrain = default(VirtualTrain);
 
                 foreach (var trainCarAlias in TriggerData.TrainCars)
                 {
@@ -3354,10 +4308,40 @@ namespace Oxide.Plugins
                             break;
 
                         previousTrainCar = nextTrainCar;
+
+                        var frontSpline = trainCarPrefab.Reverse
+                            ? previousTrainCar.RearTrackSection
+                            : previousTrainCar.FrontTrackSection;
+
+                        var frontWheelPos = trainCarPrefab.Reverse
+                            ? previousTrainCar.GetRearWheelPos()
+                            : previousTrainCar.GetFrontWheelPos();
+
+                        var frontWheelDistanceOnSpline = GetSplineDistance(frontSpline, frontWheelPos);
+                        var frontTrainCarForward = trainCarPrefab.Reverse
+                            ? -previousTrainCar.transform.forward
+                            : previousTrainCar.transform.forward;
+
+                        var ascending = frontSpline.IsForward(frontTrainCarForward, frontWheelDistanceOnSpline);
+
+                        virtualTrain = new VirtualTrain
+                        {
+                            TrackSelection = trackSelection,
+                            Ascending = !ascending,
+                            IsForward = !ascending,
+                            Distance = frontWheelDistanceOnSpline,
+                            Spline = frontSpline,
+                        };
+
+                        var frontWheelOffsetZ = Mathf.Abs(trainCarPrefab.Reverse
+                            ? previousTrainCar.rearBogieLocalOffset.z
+                            : previousTrainCar.frontBogieLocalOffset.z);
+
+                        virtualTrain.TryMoveDistance(frontWheelOffsetZ, out _);
                     }
                     else
                     {
-                        var nextTrainCar = AddTrainCar(previousTrainCar, previousTrainCarPrefab, trainCarPrefab, trackSelection);
+                        var nextTrainCar = AddTrainCar(ref virtualTrain, previousTrainCar, previousTrainCarPrefab, trainCarPrefab, trackSelection);
                         if (nextTrainCar == null)
                             break;
 
@@ -3366,7 +4350,7 @@ namespace Oxide.Plugins
 
                     previousTrainCarPrefab = trainCarPrefab;
 
-                    _spawnedTrains.Add(previousTrainCar);
+                    _spawnedTrainCars.Add(previousTrainCar);
                     SpawnedTrainCarComponent.AddToEntity(previousTrainCar, this);
                 }
 
@@ -3387,20 +4371,20 @@ namespace Oxide.Plugins
 
             private void SpawnTrainTracked()
             {
-                _plugin.TrackStart();
+                Plugin.TrackStart();
                 SpawnTrain();
-                _plugin.TrackEnd();
+                Plugin.TrackEnd();
             }
 
             private bool KillTrains()
             {
-                if (_spawnedTrains == null)
+                if (_spawnedTrainCars == null)
                     return false;
 
-                for (var i = _spawnedTrains.Count - 1; i >= 0; i--)
+                for (var i = _spawnedTrainCars.Count - 1; i >= 0; i--)
                 {
-                    EntityUtils.KillEntity(_spawnedTrains[i]);
-                    _spawnedTrains.RemoveAt(i);
+                    EntityUtils.KillEntity(_spawnedTrainCars[i]);
+                    _spawnedTrainCars.RemoveAt(i);
                 }
 
                 return true;
@@ -3441,8 +4425,8 @@ namespace Oxide.Plugins
             public override Vector3 WorldPosition => TriggerData.Position;
             protected override Quaternion WorldRotation => Quaternion.Euler(0, TriggerData.RotationAngle, 0);
 
-            public MapTriggerInstance(AutomatedWorkcarts plugin, TrainManager trainManager, TriggerData triggerData)
-                : base(plugin, trainManager, triggerData) {}
+            public MapTriggerInstance(AutomatedWorkcarts plugin, TriggerData triggerData)
+                : base(plugin, triggerData) {}
         }
 
         private class TunnelTriggerInstance : BaseTriggerInstance
@@ -3452,8 +4436,8 @@ namespace Oxide.Plugins
             public override Vector3 WorldPosition => DungeonCellWrapper.TransformPoint(TriggerData.Position);
             protected override Quaternion WorldRotation => DungeonCellWrapper.Rotation * Quaternion.Euler(0, TriggerData.RotationAngle, 0);
 
-            public TunnelTriggerInstance(AutomatedWorkcarts plugin, TrainManager trainManager, TriggerData triggerData, DungeonCellWrapper dungeonCellWrapper)
-                : base(plugin, trainManager, triggerData)
+            public TunnelTriggerInstance(AutomatedWorkcarts plugin, TriggerData triggerData, DungeonCellWrapper dungeonCellWrapper)
+                : base(plugin, triggerData)
             {
                 DungeonCellWrapper = dungeonCellWrapper;
             }
@@ -3552,7 +4536,7 @@ namespace Oxide.Plugins
 
             public void Create(AutomatedWorkcarts plugin)
             {
-                var triggerInstance = new MapTriggerInstance(plugin, _trainManager, TriggerData);
+                var triggerInstance = new MapTriggerInstance(plugin, TriggerData);
                 TriggerInstanceList = new BaseTriggerInstance[] { triggerInstance };
                 triggerInstance.HandleChanges();
             }
@@ -3570,7 +4554,7 @@ namespace Oxide.Plugins
 
                 for (var i = 0; i < matchingDungeonCells.Count; i++)
                 {
-                    var triggerInstance = new TunnelTriggerInstance(plugin, _trainManager, TriggerData, matchingDungeonCells[i]);
+                    var triggerInstance = new TunnelTriggerInstance(plugin, TriggerData, matchingDungeonCells[i]);
                     TriggerInstanceList[i] = triggerInstance;
                     triggerInstance.HandleChanges();
                 }
@@ -3622,7 +4606,7 @@ namespace Oxide.Plugins
                     return;
 
                 triggerInstanceList.Add(triggerInstance);
-                triggerInstanceList.Sort((a, b) => a.DistanceOnSpline.CompareTo(b.DistanceOnSpline));
+                triggerInstanceList.Sort((a, b) => a.GetDistanceOnSpline(spline).CompareTo(b.GetDistanceOnSpline(spline)));
             }
 
             public void UnregisterTriggerFromSpline(BaseTriggerInstance triggerInstance, TrainTrackSpline spline)
@@ -3929,10 +4913,11 @@ namespace Oxide.Plugins
             private void ShowTrigger(BasePlayer player, BaseTriggerInstance trigger, string routeName, int count = 1)
             {
                 var triggerData = trigger.TriggerData;
-                var color = triggerData.GetColor(routeName);
 
                 var spherePosition = trigger.TriggerPosition;
-                player.SendConsoleCommand("ddraw.sphere", TriggerDisplayDuration, color, spherePosition, TriggerDisplayRadius);
+                var drawColor = triggerData.GetColor(routeName);
+                var drawer = new Ddraw(player, TriggerDisplayDuration, drawColor);
+                drawer.Sphere(spherePosition, TriggerDisplayRadius);
 
                 var triggerPrefix = _plugin.GetTriggerPrefix(player, triggerData);
                 var infoLines = new List<string>();
@@ -3964,6 +4949,54 @@ namespace Oxide.Plugins
                 }
                 else
                 {
+                    if (triggerData.Intersection)
+                    {
+                        var intersectionController = trigger.IntersectionController;
+
+                        var recentDeadLock = intersectionController?.RecentlyAttemptedDeadLockMitigation ?? false;
+                        infoLines.Add(_plugin.GetMessage(player, Lang.InfoTriggerIntersection) + $" ({intersectionController?.GetNumQueued() ?? 0}){(recentDeadLock ? "\n*****" : "")}");
+                        if (intersectionController != null)
+                        {
+                            foreach (var (spline, (ascendingDistance, descendingDistance)) in intersectionController.SplineDistances)
+                            {
+                                var virtualTrain = new VirtualTrain
+                                {
+                                    Spline = spline,
+                                    Ascending = false,
+                                    Distance = trigger.GetDistanceOnSpline(spline),
+                                    TrackSelection = TrackSelection.Default,
+                                };
+
+                                virtualTrain.TryMoveDistance(ascendingDistance, out var position);
+                                drawer.Arrow(spherePosition, position, 0.5f);
+                                // drawer.Text(position, $"{ascendingDistance}m");
+
+                                virtualTrain = new VirtualTrain
+                                {
+                                    Spline = spline,
+                                    Ascending = true,
+                                    Distance = trigger.GetDistanceOnSpline(spline),
+                                    TrackSelection = TrackSelection.Default,
+                                };
+
+                                virtualTrain.TryMoveDistance(descendingDistance, out position);
+                                drawer.Arrow(spherePosition, position, 0.5f);
+                                // drawer.Text(position, $"{descendingDistance}m");
+                            }
+                        }
+
+                        var ownerTrainController = intersectionController?.OwnerTrainController;
+                        if (ownerTrainController != null)
+                        {
+                            var leadTrainEngine = GetLeadTrainEngine(ownerTrainController.PrimaryTrainEngine.completeTrain);
+                            if (leadTrainEngine != null)
+                            {
+                                var couplingPosition = GetTrainCarCouplingPosition(leadTrainEngine, front: true);
+                                drawer.Arrow(couplingPosition, spherePosition, 0.5f, color: Color.green);
+                            }
+                        }
+                    }
+
                     if (triggerData.IsSpawner)
                     {
                         var sb = new StringBuilder();
@@ -3991,11 +5024,7 @@ namespace Oxide.Plugins
                         }
 
                         infoLines.Add(_plugin.GetMessage(player, Lang.InfoTriggerSpawner, sb.ToString()));
-
-                        var spawnRotation = trigger.SpawnRotation;
-                        var arrowBack = spherePosition + Vector3.up + spawnRotation * Vector3.back * 1.5f;
-                        var arrowForward = spherePosition + Vector3.up + spawnRotation * Vector3.forward * 1.5f;
-                        player.SendConsoleCommand("ddraw.arrow", TriggerDisplayDuration, color, arrowBack, arrowForward, 0.5f);
+                        drawer.Arrow(spherePosition + Vector3.up, trigger.SpawnRotation, 1.5f, 0.5f);
                     }
 
                     if (triggerData.AddConductor)
@@ -4061,7 +5090,7 @@ namespace Oxide.Plugins
                 }
 
                 var textPosition = trigger.TriggerPosition + new Vector3(0, 1.5f + infoLines.Count * 0.075f, 0);
-                player.SendConsoleCommand("ddraw.text", TriggerDisplayDuration, color, textPosition, string.Join("\n", infoLines));
+                drawer.Text(textPosition, string.Join("\n", infoLines));
             }
 
             public BaseTriggerInstance FindNearestTrigger(Vector3 position, float maxDistanceSquared = 9)
@@ -4198,7 +5227,7 @@ namespace Oxide.Plugins
                     Route = triggerData?.Route,
                 };
 
-                var trainController = new TrainController(_plugin, this, trainEngineData, countsTowardConductorLimit);
+                var trainController = new TrainController(_plugin, trainEngineData, countsTowardConductorLimit);
                 _trainControllers.Add(trainController);
                 _routeManager.RecomputeRoutes();
 
@@ -4342,7 +5371,23 @@ namespace Oxide.Plugins
 
                     var drawColor = trainController.TrainState?.Color ?? Color.grey;
                     var drawPosition = primaryTrainPosition + Vector3.up;
-                    player.SendConsoleCommand("ddraw.text", duration, drawColor, drawPosition, trainController.ToString());
+                    var drawer = new Ddraw(player, duration, drawColor);
+                    drawer.Text(drawPosition, trainController.ToString());
+
+                    if (trainController.TrainState is QueuedState queuedState)
+                    {
+                        var leadTrainEngine = GetLeadTrainEngine(trainController.PrimaryTrainEngine.completeTrain);
+                        if (leadTrainEngine != null)
+                        {
+                            var intersectionPosition = queuedState.TriggerInstance.WorldPosition + Vector3.up;
+                            var couplingPosition = GetTrainCarCouplingPosition(leadTrainEngine, front: true);
+                            drawer.Arrow(couplingPosition, intersectionPosition, 0.5f, color: Color.red);
+                            drawer.Sphere(Vector3.MoveTowards(intersectionPosition, couplingPosition, queuedState.BufferDistance), 0.5f, color: Color.red);
+                            // player.SendConsoleCommand("ddraw.arrow", duration, Color.red, couplingPosition, queuedState.TriggerInstance.WorldPosition + Vector3.up, 0.5f);
+                            // player.SendConsoleCommand("ddraw.sphere", duration, drawColor, position, queuedState.TriggerInstance.WorldPosition + Vector3.up, 0.5f);
+                            // player.SendConsoleCommand("ddraw.sphere", duration, drawColor, queuedState.TriggerInstance.WorldPosition + Vector3.up, 0.5f);
+                        }
+                    }
                 }
             }
         }
@@ -4350,6 +5395,28 @@ namespace Oxide.Plugins
         #endregion
 
         #region Train State
+
+        private static bool IsLeadTrainCarWithinDistance(TrainController trainController, Vector3 targetPosition, float distance)
+        {
+            var completeTrain = trainController.PrimaryTrainEngine.completeTrain;
+            if (completeTrain == null)
+                return false;
+
+            var leadTrainCar = GetLeadTrainCar(completeTrain);
+            var position = GetTrainCarCouplingPosition(leadTrainCar, front: true);
+            return (targetPosition - position).sqrMagnitude <= distance * distance;
+        }
+
+        private static bool IsRearTrainWithinDistance(TrainController trainController, Vector3 targetPosition, float distance)
+        {
+            var completeTrain = trainController.PrimaryTrainEngine.completeTrain;
+            if (completeTrain == null)
+                return false;
+
+            var rearTrainCar = GetRearTrainCar(completeTrain);
+            var position = GetTrainCarCouplingPosition(rearTrainCar, front: false);
+            return (targetPosition - position).sqrMagnitude <= distance * distance;
+        }
 
         private abstract class TrainState
         {
@@ -4363,29 +5430,249 @@ namespace Oxide.Plugins
             {
                 _trainController = trainController;
             }
+
+            protected bool IsNearSpeed(EngineSpeeds desiredThrottle, float leeway = 0.1f)
+            {
+                var trainEngine = _trainController.PrimaryTrainEngine;
+
+                var currentSpeed = Vector3.Dot(_trainController.PrimaryTrainEngineController.Transform.forward, trainEngine.GetLocalVelocity());
+                var desiredSpeed = trainEngine.maxSpeed * GetThrottleFraction(desiredThrottle);
+
+                // If desiring negative speed, current speed is expected to increase while braking (e.g., -10 to -5).
+                // If desiring positive speed, current speed is expected to decrease while braking (e.g., 10 to 5).
+                // If desiring zero speed, the direction depends on the throttle being applied (e.g., if positive, -10 to -5).
+                return desiredSpeed < 0 || (desiredSpeed == 0 && GetThrottleFraction(trainEngine.CurThrottleSetting) > 0)
+                    ? currentSpeed + leeway >= desiredSpeed
+                    : currentSpeed - leeway <= desiredSpeed;
+            }
+
+            protected bool IsWithinDistance(Vector3 targetPosition, float distance)
+            {
+                return IsLeadTrainCarWithinDistance(_trainController, targetPosition, distance);
+            }
         }
 
         private class DrivingState : TrainState
         {
-            public override Color Color => Color.green;
+            private const float TrainDistanceFar = 60f;
+            private const float TrainDistanceClose = 20f;
+
+            private enum DrivingSubState
+            {
+                Normal,
+                SlowingDown,
+                ApproachingSlowly,
+                Stopping,
+                Waiting,
+            }
+
+            public override Color Color => _drivingSubState == DrivingSubState.Normal
+                ? Color.green
+                : Color.HSVToRGB(0.2f, 1, 1);
 
             public EngineSpeeds Throttle;
+            public TrainController BlockedByTrain { get; private set; }
+            private EngineSpeeds _loThrottle;
+            private EngineSpeeds _brakeToThrottle;
+            private DrivingSubState _drivingSubState;
+            private Action _lookAhead;
+            private Action _fixedUpdate;
 
             public DrivingState(TrainController trainController, EngineSpeeds throttle) : base(trainController)
             {
                 Throttle = throttle;
+                _lookAhead = LookAhead;
+                _fixedUpdate = FixedUpdate;
+                _loThrottle = ApplySpeedAndDirection(Throttle, SpeedInstruction.Lo);
             }
 
             public override void Enter()
             {
+                _drivingSubState = DrivingSubState.Normal;
                 _trainController.SetThrottle(Throttle);
+                _trainController.PrimaryTrainEngineController.InvokeRandomized(_lookAhead, 0, 0.5f, 0.05f);
             }
 
-            public override void Exit() {}
+            public override void Exit()
+            {
+                StopFixedUpdate();
+                _trainController.PrimaryTrainEngineController.CancelInvoke(_lookAhead);
+            }
 
             public override string ToString()
             {
-                return $"{nameof(DrivingState)}: {Throttle}";
+                return $"{nameof(DrivingState)}: {Throttle} | {_drivingSubState}";
+            }
+
+            private void BeginBraking(EngineSpeeds? brakeToThrottle = null)
+            {
+                var brakeThrottle = ApplySpeedAndDirection(Throttle, SpeedInstruction.Lo, DirectionInstruction.Invert);
+                _brakeToThrottle = brakeToThrottle ?? _loThrottle;
+                _trainController.SetThrottle(brakeThrottle);
+                _trainController.PrimaryTrainEngineController.InvokeRepeatingFixedTime(_fixedUpdate);
+            }
+
+            private void StopFixedUpdate()
+            {
+                _trainController.PrimaryTrainEngineController.CancelInvokeFixedTime(_fixedUpdate);
+            }
+
+            private void FixedUpdate()
+            {
+                if (IsNearSpeed(_brakeToThrottle))
+                {
+                    _trainController.SetThrottle(_brakeToThrottle);
+
+                    if (_drivingSubState == DrivingSubState.SlowingDown)
+                    {
+                        _drivingSubState = DrivingSubState.ApproachingSlowly;
+                    }
+                    else if (_drivingSubState == DrivingSubState.Stopping)
+                    {
+                        _drivingSubState = DrivingSubState.Waiting;
+                    }
+
+                    StopFixedUpdate();
+                }
+            }
+
+            private bool HandleUpcomingTrackUser(ITrainTrackUser trackUser, float distanceAhead)
+            {
+                if (distanceAhead <= TrainDistanceFar)
+                    return false;
+
+                if (trackUser is not TrainCar trainCar)
+                    return false;
+
+                var otherTrainController = _trainController.TrainManager.GetTrainController(trainCar);
+                if (otherTrainController == null)
+                    return false;
+
+                BlockedByTrain = otherTrainController;
+
+                // TODO: Consider the train's state and velocity
+
+                switch (_drivingSubState)
+                {
+                    case DrivingSubState.Normal:
+                    {
+                        if (distanceAhead <= TrainDistanceFar)
+                        {
+                            BeginBraking();
+                            _drivingSubState = DrivingSubState.SlowingDown;
+                            return true;
+                        }
+
+                        break;
+                    }
+
+                    case DrivingSubState.SlowingDown:
+                    {
+                        // BrakeUpdate will handle this
+                        return true;
+                    }
+
+                    case DrivingSubState.ApproachingSlowly:
+                    {
+                        if (distanceAhead <= TrainDistanceClose)
+                        {
+                            // CancelBraking();
+
+                            if (otherTrainController.TryDepartEarly(out var scheduleDelaySeconds))
+                            {
+                                _trainController.IncreaseDelay(scheduleDelaySeconds);
+                            }
+
+                            BeginBraking(EngineSpeeds.Zero);
+                            _drivingSubState = DrivingSubState.Stopping;
+                        }
+
+                        return true;
+                    }
+
+                    case DrivingSubState.Stopping:
+                    {
+                        return true;
+                    }
+
+                    case DrivingSubState.Waiting:
+                    {
+                        // The main LookAhead update will handle this
+                        if (distanceAhead > TrainDistanceClose * 1.25f)
+                        {
+                            _trainController.SetThrottle(_loThrottle);
+                            _drivingSubState = DrivingSubState.ApproachingSlowly;
+                        }
+
+                        return true;
+                    }
+
+                    default:
+                        return false;
+                }
+
+                return false;
+            }
+
+            private void LookAhead()
+            {
+                var virtualTrain = VirtualTrain.FromTrainController(_trainController);
+                virtualTrain.HitTrackUsers = true;
+
+                var initialDistance = IntersectionController.LookAheadDistance;
+                var remainingDistance = initialDistance;
+
+                for (var i = 0; i < 100; i++)
+                {
+                    if (!virtualTrain.TryMove(out var distanceTraveled, out var triggerInstance, out var trackUser, maxDistance: remainingDistance))
+                        break;
+
+                    if (triggerInstance != null && HandleUpcomingTrigger(triggerInstance, virtualTrain.Spline, virtualTrain.Ascending))
+                        return;
+
+                    if (trackUser != null && HandleUpcomingTrackUser(trackUser, initialDistance - remainingDistance))
+                        return;
+
+                    remainingDistance -= distanceTraveled;
+                    if (remainingDistance <= 0.001f)
+                        break;
+                }
+
+                // Found no obstacles, so resume normal driving.
+                if (_drivingSubState != DrivingSubState.Normal)
+                {
+                    StopFixedUpdate();
+                    _trainController.SetThrottle(Throttle);
+                    _drivingSubState = DrivingSubState.Normal;
+                    BlockedByTrain = null;
+                }
+            }
+
+            private bool HandleUpcomingTrigger(BaseTriggerInstance triggerInstance, TrainTrackSpline spline, bool ascending)
+            {
+                if (triggerInstance.TriggerData.Destroy)
+                    return true;
+
+                if (!triggerInstance.TriggerData.Intersection)
+                    return false;
+
+                var intersectionController = triggerInstance.IntersectionController;
+                if (intersectionController == null)
+                    return false;
+
+                if (intersectionController.OwnerTrainController == _trainController)
+                    return false;
+
+                if (!intersectionController.QueueTrain(_trainController, spline, ascending))
+                {
+                    var bufferDistance = intersectionController.GetBufferDistance(spline, ascending);
+                    _trainController.SwitchState(new QueuedState(_trainController, triggerInstance, bufferDistance, this));
+                    // Don't queue for more than one intersection, to reduce deadlocks.
+                    return true;
+                }
+
+                // LogWarning("Claimed intersection");
+                return false;
             }
         }
 
@@ -4393,7 +5680,7 @@ namespace Oxide.Plugins
         {
             public override Color Color => Color.grey;
 
-            protected readonly TrainState NextState;
+            public readonly TrainState NextState;
 
             protected TransitionState(TrainController trainController, TrainState nextState) : base(trainController)
             {
@@ -4419,6 +5706,194 @@ namespace Oxide.Plugins
             }
         }
 
+        private class QueuedState : TransitionState
+        {
+            private enum QueuedSubState
+            {
+                SlowingDown,
+                ApproachingSlowly,
+                Stopping,
+                Waiting,
+            }
+
+            private static HashSet<TrainController> _reusableTrainList = new ();
+
+            public override Color Color => Color.HSVToRGB(0.9f, 1, 1);
+
+            public readonly BaseTriggerInstance TriggerInstance;
+            public readonly float BufferDistance;
+            private EngineSpeeds _brakeToThrottle;
+            private QueuedSubState _queuedSubState;
+            private Action _fixedUpdate;
+            private Action _checkIntersection;
+
+            public IntersectionController IntersectionController => TriggerInstance.IntersectionController;
+
+            public QueuedState(TrainController trainController, BaseTriggerInstance triggerInstance, float bufferDistance, TrainState nextState)
+                : base(trainController, nextState)
+            {
+                TriggerInstance = triggerInstance;
+                BufferDistance = bufferDistance;
+                _fixedUpdate = FixedUpdate;
+                _checkIntersection = CheckIntersection;
+            }
+
+            public override void Enter()
+            {
+                BeginBraking();
+                _queuedSubState = QueuedSubState.SlowingDown;
+                _trainController.PrimaryTrainEngineController.InvokeRepeating(_checkIntersection, 0.5f, 0.5f);
+            }
+
+            public override void Exit()
+            {
+                StopFixedUpdate();
+                _trainController.PrimaryTrainEngineController.CancelInvoke(_checkIntersection);
+            }
+
+            public override string ToString()
+            {
+                return $"{nameof(QueuedState)}: {_queuedSubState} | {BufferDistance}m\n{NextState}";
+            }
+
+            private void ApplyBrakeToThrottle(EngineSpeeds? brakeToThrottle = null)
+            {
+                var departureThrottle = _trainController.DepartureThrottle;
+                var brakeThrottle = ApplySpeedAndDirection(departureThrottle, SpeedInstruction.Lo, DirectionInstruction.Invert);
+                _brakeToThrottle = brakeToThrottle ?? ApplySpeedAndDirection(departureThrottle, SpeedInstruction.Lo);
+                _trainController.SetThrottle(brakeThrottle);
+            }
+
+            private void BeginBraking(EngineSpeeds? brakeToThrottle = null)
+            {
+                ApplyBrakeToThrottle(brakeToThrottle);
+                _trainController.PrimaryTrainEngineController.InvokeRepeatingFixedTime(_fixedUpdate);
+            }
+
+            private bool ShouldSwitchToNextState()
+            {
+                var ownerTrainController = IntersectionController?.OwnerTrainController;
+                return ownerTrainController == null || ownerTrainController == _trainController;
+            }
+
+            private void StopFixedUpdate()
+            {
+                _trainController.PrimaryTrainEngineController.CancelInvokeFixedTime(_fixedUpdate);
+            }
+
+            private void FixedUpdate()
+            {
+                switch (_queuedSubState)
+                {
+                    case QueuedSubState.SlowingDown:
+                    {
+                        // TODO: Dynamic slow down according to distance
+                        if (IsNearSpeed(_brakeToThrottle))
+                        {
+                            _trainController.SetThrottle(_brakeToThrottle);
+                            _queuedSubState = QueuedSubState.ApproachingSlowly;
+                        }
+
+                        break;
+                    }
+
+                    case QueuedSubState.ApproachingSlowly:
+                    {
+                        if (IsWithinDistance(TriggerInstance.WorldPosition, BufferDistance + IntersectionController.StopAdditionalClearance))
+                        {
+                            ApplyBrakeToThrottle(EngineSpeeds.Zero);
+                            _queuedSubState = QueuedSubState.Stopping;
+                        }
+
+                        break;
+                    }
+
+                    case QueuedSubState.Stopping:
+                    {
+                        if (IsNearSpeed(_brakeToThrottle))
+                        {
+                            _trainController.SetThrottle(_brakeToThrottle);
+                            _queuedSubState = QueuedSubState.Waiting;
+                            StopFixedUpdate();
+                        }
+
+                        break;
+                    }
+
+                    case QueuedSubState.Waiting:
+                    default:
+                        LogError($"Unhandled {nameof(QueuedSubState)} sub state: {_queuedSubState}");
+                        break;
+                }
+            }
+
+            private void CheckIntersection()
+            {
+                if (ShouldSwitchToNextState())
+                {
+                    SwitchToNextState();
+                }
+                else if (IsDeadLocked(_trainController, TriggerInstance))
+                {
+                    TriggerInstance.IntersectionController.TryMitigateDeadLock();
+                }
+            }
+
+            private static bool IsDeadLocked(TrainController trainController, BaseTriggerInstance triggerInstance)
+            {
+                _reusableTrainList.Clear();
+                _reusableTrainList.Add(trainController);
+
+                for (var i = 0; i < 100; i++)
+                {
+                    var ownerTrainController = trainController.GetBlockingTrain(out var queuedState, out var blockingTriggerInstance);
+                    if (ownerTrainController == null)
+                        return false;
+
+                    if (ownerTrainController == trainController)
+                    {
+                        // Train will find out it's not blocked momentarily.
+                        return false;
+                    }
+
+                    if (queuedState != null && triggerInstance != null && blockingTriggerInstance != null)
+                    {
+                        var distanceBetweenIntersections = Vector3.Distance(triggerInstance.WorldPosition, blockingTriggerInstance.WorldPosition);
+                        var clearanceNeededBetweenIntersections = ownerTrainController.TrainLength
+                            // + queuedState.BufferDistance
+                            + blockingTriggerInstance.IntersectionController.GetBufferDistance(ownerTrainController, invert: true)
+                            + queuedState.BufferDistance
+                            + IntersectionController.StopAdditionalClearance;
+
+                        // var basePlayer = BasePlayer.activePlayerList.FirstOrDefault();
+                        // if (basePlayer != null && (triggerInstance.WorldPosition - basePlayer.transform.position).magnitude < 100f)
+                        // {
+                        //     Ddraw.Text(basePlayer, 0.5f, Color.green, ownerTrainController.PrimaryTrainEngine.Position + Vector3.up * 3, $"{blockingTriggerInstance.IntersectionController.GetBufferDistance(ownerTrainController, invert: true)} + {queuedState.BufferDistance}");
+                        // }
+
+                        if (clearanceNeededBetweenIntersections <= distanceBetweenIntersections)
+                        {
+                            // LogWarning($"Not dead locked : {clearanceNeededBetweenIntersections} <= {distanceBetweenIntersections}");
+                            return false;
+                        }
+                    }
+
+                    if (!_reusableTrainList.Add(ownerTrainController))
+                    {
+                        // LogWarning($"Found train deadlock, length; {blockingTrainController.TrainLength}");
+                        LogError($"Found train deadlock");
+                        return true;
+                    }
+
+                    trainController = ownerTrainController;
+                    triggerInstance = blockingTriggerInstance;
+                }
+
+                LogError("IsDeadLocked iterated too many times");
+                return false;
+            }
+        }
+
         private class BrakingState : TransitionState
         {
             public override Color Color => Color.HSVToRGB(0.5f/6f, 1, 1);
@@ -4426,7 +5901,7 @@ namespace Oxide.Plugins
             public EngineSpeeds TargetThrottle;
             public bool IsStopping => TargetThrottle == EngineSpeeds.Zero;
 
-            public BrakingState(TrainController trainController, TrainState nextState, EngineSpeeds targetThrottle)
+            public BrakingState(TrainController trainController, EngineSpeeds targetThrottle, TrainState nextState)
                 : base(trainController, nextState)
             {
                 TargetThrottle = targetThrottle;
@@ -4444,19 +5919,9 @@ namespace Oxide.Plugins
                 _trainController.PrimaryTrainEngineController.CancelInvokeFixedTime(BrakeUpdate);
             }
 
-            private bool IsNearSpeed(EngineSpeeds desiredThrottle, float leeway = 0.1f)
+            public override string ToString()
             {
-                var trainEngine = _trainController.PrimaryTrainEngine;
-
-                var currentSpeed = Vector3.Dot(_trainController.PrimaryTrainEngineController.Transform.forward, trainEngine.GetLocalVelocity());
-                var desiredSpeed = trainEngine.maxSpeed * GetThrottleFraction(desiredThrottle);
-
-                // If desiring negative speed, current speed is expected to increase while braking (e.g., -10 to -5).
-                // If desiring positive speed, current speed is expected to decrease while braking (e.g., 10 to 5).
-                // If desiring zero speed, the direction depends on the throttle being applied (e.g., if positive, -10 to -5).
-                return desiredSpeed < 0 || (desiredSpeed == 0 && GetThrottleFraction(trainEngine.CurThrottleSetting) > 0)
-                    ? currentSpeed + leeway >= desiredSpeed
-                    : currentSpeed - leeway <= desiredSpeed;
+                return $"{nameof(BrakingState)}: {TargetThrottle}\n{NextState}";
             }
 
             private void BrakeUpdate()
@@ -4465,11 +5930,6 @@ namespace Oxide.Plugins
                 {
                     SwitchToNextState();
                 }
-            }
-
-            public override string ToString()
-            {
-                return $"{nameof(BrakingState)}: {TargetThrottle}\n{NextState}";
             }
         }
 
@@ -4487,7 +5947,7 @@ namespace Oxide.Plugins
             public float CumulativeTimeRemaining => TimeRemaining + (GetNextStateOfType<IdleState>()?.CumulativeTimeRemaining ?? 0);
             public float TimeElapsed => _isIdleDueToCollision || _startTime == 0 ? 0 : Time.time - _startTime;
 
-            public IdleState(TrainController trainController, TrainState nextState, float durationSeconds, bool isIdleDueToCollision = false)
+            public IdleState(TrainController trainController, float durationSeconds, TrainState nextState, bool isIdleDueToCollision = false)
                 : base(trainController, nextState)
             {
                 _durationSeconds = durationSeconds;
@@ -4512,18 +5972,18 @@ namespace Oxide.Plugins
 
                 if (!_isIdleDueToCollision)
                 {
-                    _trainController.ReduceDelay(TimeElapsed);
+                    _trainController.DecreaseDelay(TimeElapsed);
                 }
-            }
-
-            private void StopIdling()
-            {
-                SwitchToNextState();
             }
 
             public override string ToString()
             {
                 return $"{nameof(IdleState)}: {TimeRemaining:f1}{(_isIdleDueToCollision ? "*" : "")}s\n{NextState}";
+            }
+
+            private void StopIdling()
+            {
+                SwitchToNextState();
             }
         }
 
@@ -4536,7 +5996,7 @@ namespace Oxide.Plugins
             public const float ConductorTriggerMaxDelay = 1f;
             private const float CollisionIdleSeconds = 5f;
 
-            public TrainManager TrainManager { get; }
+            public AutomatedWorkcarts Plugin { get; }
             public TrainEngineController PrimaryTrainEngineController { get; private set; }
             public TrainState TrainState { get; private set; }
             public bool IsDestroying { get; private set; }
@@ -4547,17 +6007,18 @@ namespace Oxide.Plugins
             public TrainEngine PrimaryTrainEngine => PrimaryTrainEngineController.TrainEngine;
             public string RouteName => _trainEngineData.Route;
 
-            private Configuration _config => _plugin._config;
-            private RouteManager _routeManager => _plugin._routeManager;
+            public TrainManager TrainManager => Plugin._trainManager;
+            private Configuration _config => Plugin._config;
+            private RouteManager _routeManager => Plugin._routeManager;
+            private SpawnedTrainCarTracker _spawnedTrainCarTracker => Plugin._spawnedTrainCarTracker;
 
             public Vector3 Forward => EngineThrottleToNumber(DepartureThrottle) >= 0
                 ? PrimaryTrainEngine.transform.forward
                 : -PrimaryTrainEngine.transform.forward;
 
             private bool _isStopped => TrainState is IdleState;
-            private bool _isStopping => (TrainState as BrakingState)?.IsStopping ?? false;
-
-            private SpawnedTrainCarTracker _spawnedTrainCarTracker => TrainManager.SpawnedTrainCarTracker;
+            private bool _isStopping => TrainState is BrakingState { IsStopping: true };
+            private bool _isStoppingOrStopped => _isStopping || _isStopped;
 
             private DrivingState _nextDrivingState =>
                 TrainState as DrivingState ?? (TrainState as TransitionState)?.GetNextStateOfType<DrivingState>();
@@ -4568,7 +6029,6 @@ namespace Oxide.Plugins
             private float _cumulativeTimeRemaining => _idleState?.CumulativeTimeRemaining ?? 0;
             private float _timeElapsed => _idleState?.TimeElapsed ?? 0;
 
-            private AutomatedWorkcarts _plugin;
             private readonly List<TrainEngineController> _trainEngineControllers = new();
             private readonly List<ITrainCarComponent> _trainCarComponents = new();
 
@@ -4580,15 +6040,28 @@ namespace Oxide.Plugins
             private VendingMachineMapMarker _vendingMarker;
             private MapMarker _crateMarker;
             private bool _isDestroyed;
+            private float _trainLength;
+
+            public float TrainLength
+            {
+                get
+                {
+                    if (_trainLength == 0)
+                    {
+                        _trainLength = _trainLength = GetTrainLength(PrimaryTrainEngine.completeTrain);
+                    }
+
+                    return _trainLength;
+                }
+            }
 
             // Desired velocity, ignoring circumstances like stopping/braking/chilling.
             public EngineSpeeds DepartureThrottle =>
                 _nextDrivingState?.Throttle ?? PrimaryTrainEngine.CurThrottleSetting;
 
-            public TrainController(AutomatedWorkcarts plugin, TrainManager trainManager, TrainEngineData workcartData, bool countsTowardConductorLimit)
+            public TrainController(AutomatedWorkcarts plugin, TrainEngineData workcartData, bool countsTowardConductorLimit)
             {
-                _plugin = plugin;
-                TrainManager = trainManager;
+                Plugin = plugin;
                 _trainEngineData = workcartData;
                 _nearbyPlayerFilter = NearbyPlayerFilter;
                 CountsTowardConductorLimit = countsTowardConductorLimit;
@@ -4599,6 +6072,65 @@ namespace Oxide.Plugins
                 var adjustment = DelaySeconds - _timeElapsed;
                 var delayInfo = adjustment > 0 ? $" | {adjustment:+#.#}s" : "";
                 return $"{PrimaryTrainEngine.CurThrottleSetting} | {PrimaryTrainEngine.localTrackSelection}{delayInfo}\n{TrainState?.ToString() ?? "No state"}";
+            }
+
+            public float MinDistanceFrom(Vector3 position)
+            {
+                if (PrimaryTrainEngine.completeTrain == null)
+                    return float.MaxValue;
+
+                return GetMinDistanceFromTrain(PrimaryTrainEngine.completeTrain, position);
+            }
+
+            public TrainController GetBlockingTrain(out QueuedState queuedState, out BaseTriggerInstance triggerInstance)
+            {
+                if (TrainState is DrivingState drivingState)
+                {
+                    queuedState = null;
+                    triggerInstance = null;
+                    return drivingState.BlockedByTrain;
+                }
+
+                queuedState = TrainState as QueuedState;
+                triggerInstance = queuedState?.TriggerInstance;
+                return triggerInstance?.IntersectionController?.OwnerTrainController;
+            }
+
+            public bool HasMovedPastPosition(Vector3 position, float distance)
+            {
+                var completeTrain = PrimaryTrainEngine.completeTrain;
+                if (completeTrain == null)
+                    return true;
+
+                var leadTrainCar = GetLeadTrainCar(completeTrain);
+                var leadTrainCarVelocity = leadTrainCar.GetWorldVelocity();
+                var frontDelta = GetTrainCarCouplingPosition(leadTrainCar, front: true) - position;
+                if (frontDelta.magnitude < distance || Vector3.Dot(frontDelta, leadTrainCarVelocity) <= 0)
+                    return false;
+
+                var rearTrainCar = GetRearTrainCar(completeTrain);
+                var rearDelta = GetTrainCarCouplingPosition(rearTrainCar, front: false) - position;
+                if (rearDelta.magnitude < distance)
+                    return false;
+
+                var rearTrainCarVelocity = leadTrainCar == rearTrainCar
+                    ? leadTrainCarVelocity
+                    : rearTrainCar.GetWorldVelocity();
+
+                if (Vector3.Dot(rearDelta, rearTrainCarVelocity) <= 0)
+                    return false;
+
+                return true;
+            }
+
+            public void SwitchIntersection(BaseTriggerInstance triggerInstance, IntersectionController intersectionController)
+            {
+                if (TrainState is not QueuedState queuedState)
+                    return;
+
+                queuedState.TriggerInstance.IntersectionController.RemoveTrain(this);
+                var bufferDistance = intersectionController.GetBufferDistance(this);
+                SwitchState(new QueuedState(this, triggerInstance, bufferDistance, queuedState.NextState));
             }
 
             public void ScheduleCinematicDestruction()
@@ -4695,7 +6227,7 @@ namespace Oxide.Plugins
                         var fullCommand = IdRegex.Replace(command, PrimaryTrainEngineController.NetIdString);
                         if (!string.IsNullOrWhiteSpace(fullCommand))
                         {
-                            _plugin.server.Command(fullCommand);
+                            Plugin.server.Command(fullCommand);
                         }
                     }
                 }
@@ -4728,31 +6260,37 @@ namespace Oxide.Plugins
                     var brakeSpeedInstruction = triggerData.GetSpeedInstructionOrZero();
                     if (brakeSpeedInstruction == SpeedInstruction.Zero)
                     {
-                        var finalState = new DrivingState(this, newDepartureThrottle);
-                        var nextState = new IdleState(this, finalState, triggerData.GetStopDuration());
-                        SwitchState(new BrakingState(this, nextState, EngineSpeeds.Zero));
+                        SwitchState(new BrakingState(this, EngineSpeeds.Zero,
+                            new IdleState(this, triggerData.GetStopDuration(),
+                                new DrivingState(this, newDepartureThrottle))));
                         return;
                     }
 
                     var brakeUntilVelocity = ApplySpeedAndDirection(currentDepartureThrottle, brakeSpeedInstruction, directionInstruction);
-                    SwitchState(new BrakingState(this, new DrivingState(this, brakeUntilVelocity), brakeUntilVelocity));
+                    SwitchState(new BrakingState(this, brakeUntilVelocity,
+                        new DrivingState(this, brakeUntilVelocity)));
                     return;
                 }
 
                 var speedInstruction = triggerData.GetSpeedInstruction();
                 if (speedInstruction == SpeedInstruction.Zero)
                 {
-                    if (TrainState is BrakingState brakingState)
+                    var idleState = new IdleState(this, triggerData.GetStopDuration(),
+                        new DrivingState(this, newDepartureThrottle));
+
+                    if (TrainState is BrakingState)
                     {
-                        // Update brake-to speed.
-                        brakingState.TargetThrottle = EngineSpeeds.Zero;
+                        SwitchState(new BrakingState(this, EngineSpeeds.Zero, idleState));
                         return;
                     }
 
                     // Trigger with speed Zero, but no braking.
-                    SwitchState(new IdleState(this, new DrivingState(this, newDepartureThrottle), triggerData.GetStopDuration()));
+                    SwitchState(idleState);
                     return;
                 }
+
+                if (speedInstruction == null && directionInstruction == null)
+                    return;
 
                 var nextThrottle = ApplySpeedAndDirection(currentDepartureThrottle, speedInstruction, directionInstruction);
 
@@ -4773,29 +6311,40 @@ namespace Oxide.Plugins
                 return MarkerUtils.UpdateMarkerColor(ColorMarker, DetermineMarkerColor());
             }
 
-            public void PauseEngine(float scheduleAdjustment = 0)
+            public void PauseEngine(float scheduleDelaySeconds = 0)
             {
                 if (TrainState is IdleState)
                     return;
 
-                DelaySeconds = Mathf.Max(scheduleAdjustment, DelaySeconds);
-                SwitchState(new IdleState(this, TrainState, CollisionIdleSeconds, isIdleDueToCollision: true));
+                IncreaseDelay(scheduleDelaySeconds);
+                SwitchState(new IdleState(this, CollisionIdleSeconds, TrainState, isIdleDueToCollision: true));
             }
 
-            public void ReduceDelay(float amount)
+            public void IncreaseDelay(float scheduleAdjustment)
+            {
+                DelaySeconds = Mathf.Max(scheduleAdjustment, DelaySeconds);
+            }
+
+            public void DecreaseDelay(float amount)
             {
                 DelaySeconds = Mathf.Max(DelaySeconds - amount, 0);
             }
 
-            public float DepartEarlyIfStoppedOrStopping()
+            public bool TryDepartEarly(out float scheduleDelaySeconds)
             {
+                scheduleDelaySeconds = 0;
+
                 if (TrainState is not TransitionState transitionState)
-                    return DelaySeconds;
+                    return false;
+
+                if (!_isStoppingOrStopped)
+                    return false;
 
                 var timeRemaining = _cumulativeTimeRemaining;
                 transitionState.SwitchToNextStateOfType<DrivingState>();
                 DelaySeconds = Mathf.Max(timeRemaining, DelaySeconds);
-                return DelaySeconds;
+                scheduleDelaySeconds = DelaySeconds;
+                return true;
             }
 
             public void SwitchState(TrainState nextState)
@@ -4896,16 +6445,16 @@ namespace Oxide.Plugins
                 return Query.Server.GetPlayersInSphere(
                     PrimaryTrainEngineController.Position,
                     _config.PlayHornForNearbyPlayersInRadius,
-                    _plugin._playerQueryResults,
+                    Plugin._playerQueryResults,
                     _nearbyPlayerFilter
                 ) > 0;
             }
 
             private void MaybeToggleHorn()
             {
-                _plugin.TrackStart();
+                Plugin.TrackStart();
                 PrimaryTrainEngine.SetFlag(Flag_Horn, ShouldPlayHorn());
-                _plugin.TrackEnd();
+                Plugin.TrackEnd();
             }
 
             private void MaybeAddMapMarkers()
@@ -4940,7 +6489,7 @@ namespace Oxide.Plugins
                 // and enabling global broadcast for lots of train engines would significantly reduce client FPS.
                 PrimaryTrainEngineController.InvokeRandomized(() =>
                 {
-                    _plugin.TrackStart();
+                    Plugin.TrackStart();
 
                     if (ColorMarker != null)
                     {
@@ -4956,7 +6505,7 @@ namespace Oxide.Plugins
                         _vendingMarker.SendNetworkUpdate_Position();
                     }
 
-                    _plugin.TrackEnd();
+                    Plugin.TrackEnd();
                 }, 0, trainMarkerConfig.UpdateIntervalSeconds, trainMarkerConfig.UpdateIntervalSeconds * 0.1f);
             }
 
@@ -4982,8 +6531,8 @@ namespace Oxide.Plugins
                 var frontTrigger = completeTrain.frontCollisionTrigger;
                 var rearTrigger = completeTrain.rearCollisionTrigger;
 
-                _collisionTriggerA = TrainCollisionTrigger.AddToTrigger(_plugin, frontTrigger, frontTrigger.owner, this);
-                _collisionTriggerB = TrainCollisionTrigger.AddToTrigger(_plugin, rearTrigger, rearTrigger.owner, this);
+                _collisionTriggerA = TrainCollisionTrigger.AddToTrigger(Plugin, frontTrigger, frontTrigger.owner, this);
+                _collisionTriggerB = TrainCollisionTrigger.AddToTrigger(Plugin, rearTrigger, rearTrigger.owner, this);
             }
 
             private void DestroyCinematically()
@@ -5099,10 +6648,10 @@ namespace Oxide.Plugins
                         backwardController = TrainController;
                     }
 
-                    var scheduleAdjustment = 0f;
+                    var scheduleDelaySeconds = 0f;
                     if (forwardController != null)
                     {
-                        scheduleAdjustment = forwardController.DepartEarlyIfStoppedOrStopping();
+                        forwardController.TryDepartEarly(out scheduleDelaySeconds);
                     }
                     else if (_config.BulldozeOffendingWorkcarts)
                     {
@@ -5111,7 +6660,7 @@ namespace Oxide.Plugins
                         return;
                     }
 
-                    backwardController?.PauseEngine(scheduleAdjustment);
+                    backwardController?.PauseEngine(scheduleDelaySeconds);
                 }
                 else
                 {
@@ -6325,6 +7874,7 @@ namespace Oxide.Plugins
             public const string InfoTriggerSpawner = "Info.Trigger.Spawner2";
             public const string InfoTriggerAddConductor = "Info.Trigger.Conductor";
             public const string InfoTriggerDestroy = "Info.Trigger.Destroy";
+            public const string InfoTriggerIntersection = "Info.Trigger.Intersection";
             public const string InfoTriggerStopDuration = "Info.Trigger.StopDuration";
             public const string InfoTriggerChance = "Info.Trigger.Chance";
 
@@ -6398,6 +7948,7 @@ namespace Oxide.Plugins
                 [Lang.InfoTriggerSpawner] = "Spawns: {0}",
                 [Lang.InfoTriggerAddConductor] = "Adds Conductor",
                 [Lang.InfoTriggerDestroy] = "Destroys workcart",
+                [Lang.InfoTriggerIntersection] = "Intersection",
                 [Lang.InfoTriggerStopDuration] = "Stop duration: {0}s",
                 [Lang.InfoTriggerChance] = "Chance: {0}%",
 
@@ -6470,6 +8021,7 @@ namespace Oxide.Plugins
                 [Lang.InfoTriggerSpawner] = "Gera {0}",
                 [Lang.InfoTriggerAddConductor] = "Adiciona Condutor",
                 [Lang.InfoTriggerDestroy] = "Destrói o carrinho de trabalho",
+                [Lang.InfoTriggerIntersection] = "Interseção",
                 [Lang.InfoTriggerStopDuration] = "Duração da parada: {0}s",
                 [Lang.InfoTriggerChance] = "Chance: {0}%",
 
