@@ -21,7 +21,7 @@ using static TrainTrackSpline;
 
 namespace Oxide.Plugins
 {
-    [Info("Automated Workcarts", "WhiteThunder", "0.34.2")]
+    [Info("Automated Workcarts", "WhiteThunder", "0.34.3")]
     [Description("Automates workcarts with NPC conductors.")]
     internal class AutomatedWorkcarts : CovalencePlugin
     {
@@ -5028,22 +5028,6 @@ namespace Oxide.Plugins
                         HandleTrainCar(trainCar);
                         break;
                     }
-                    case TrainBarricade:
-                    {
-                        if (_config.DestroyBarricadesInstantly)
-                        {
-                            var entity2 = entity;
-                            entity.Invoke(() =>
-                            {
-                                if (entity2.IsDestroyed)
-                                    return;
-
-                                entity2.Kill();
-                            }, 0);
-                        }
-
-                        break;
-                    }
                     case JunkPile or LootContainer:
                     {
                         var entity2 = entity;
@@ -5055,6 +5039,22 @@ namespace Oxide.Plugins
                             entity2.Kill();
                             LogWarning($"Automated train destroyed entity '{entity2.ShortPrefabName}' in its path at {transform.position}.");
                         }, 0);
+                        break;
+                    }
+                    case BaseCombatEntity:
+                    {
+                        if (_config.DestroyBarricadesInstantly && entity.GetComponent<HittableByTrains>() != null)
+                        {
+                            var entity2 = entity;
+                            entity.Invoke(() =>
+                            {
+                                if (entity2.IsDestroyed)
+                                    return;
+
+                                entity2.Kill();
+                            }, 0);
+                        }
+
                         break;
                     }
                 }
