@@ -76,7 +76,7 @@ The following screenshot depicts a config with the following properties, with th
 - Vending machine and colored map markers enabled for trains, using dynamic route colors
 - Colored map markers enabled for train stops, using dynamic route colors
 
-![](https://raw.githubusercontent.com/WheteThunger/AutomatedWorkcarts/master/Images/DynamicRouteColors.png))
+![](https://raw.githubusercontent.com/WheteThunger/AutomatedWorkcarts/master/Images/DynamicRouteColors.png)
 
 ### Tutorial: Automate aboveground workcarts
 
