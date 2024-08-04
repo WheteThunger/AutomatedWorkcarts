@@ -2427,6 +2427,36 @@ namespace Oxide.Plugins
             ["intersection-b6-e"] = Quaternion.Euler(0, 90, 0),
             ["intersection-b6-s"] = Quaternion.Euler(0, 180, 0),
             ["intersection-b6-w"] = Quaternion.Euler(0, 270, 0),
+
+            ["intersection-bb1-n"] = Quaternion.identity,
+            ["intersection-bb1-e"] = Quaternion.Euler(0, 90, 0),
+            ["intersection-bb1-s"] = Quaternion.Euler(0, 180, 0),
+            ["intersection-bb1-w"] = Quaternion.Euler(0, 270, 0),
+
+            ["intersection-bb2-n"] = Quaternion.identity,
+            ["intersection-bb2-e"] = Quaternion.Euler(0, 90, 0),
+            ["intersection-bb2-s"] = Quaternion.Euler(0, 180, 0),
+            ["intersection-bb2-w"] = Quaternion.Euler(0, 270, 0),
+
+            ["intersection-bb3-n"] = Quaternion.identity,
+            ["intersection-bb3-e"] = Quaternion.Euler(0, 90, 0),
+            ["intersection-bb3-s"] = Quaternion.Euler(0, 180, 0),
+            ["intersection-bb3-w"] = Quaternion.Euler(0, 270, 0),
+
+            ["intersection-bb4-n"] = Quaternion.identity,
+            ["intersection-bb4-e"] = Quaternion.Euler(0, 90, 0),
+            ["intersection-bb4-s"] = Quaternion.Euler(0, 180, 0),
+            ["intersection-bb4-w"] = Quaternion.Euler(0, 270, 0),
+
+            ["intersection-bb5-n"] = Quaternion.identity,
+            ["intersection-bb5-e"] = Quaternion.Euler(0, 90, 0),
+            ["intersection-bb5-s"] = Quaternion.Euler(0, 180, 0),
+            ["intersection-bb5-w"] = Quaternion.Euler(0, 270, 0),
+
+            ["intersection-bb6-n"] = Quaternion.identity,
+            ["intersection-bb6-e"] = Quaternion.Euler(0, 90, 0),
+            ["intersection-bb6-s"] = Quaternion.Euler(0, 180, 0),
+            ["intersection-bb6-w"] = Quaternion.Euler(0, 270, 0),
         };
 
         private static readonly Dictionary<string, TunnelType> DungeonCellTypes = new()
