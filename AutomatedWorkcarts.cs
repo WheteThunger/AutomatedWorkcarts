@@ -5058,7 +5058,7 @@ namespace Oxide.Plugins
                         HandleTrainCar(trainCar);
                         break;
                     }
-                    case JunkPile or LootContainer:
+                    case JunkPile or LootContainer or ResourceEntity:
                     {
                         var entity2 = entity;
                         entity.Invoke(() =>
