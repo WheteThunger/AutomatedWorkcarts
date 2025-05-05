@@ -3364,7 +3364,7 @@ namespace Oxide.Plugins
                         var worldPosition = WorldPosition;
                         var trainEnginePrefab = trainCarPrefab.PrefabPath;
 
-                        if (trainCarPrefab.TrainCarAlias == TrainCarPrefab.WorkcartAlias && TriggerData.TrainCars.Length == 1)
+                        if (trainCarPrefab.TrainCarAlias == TrainCarPrefab.WorkcartAlias)
                         {
                             var terrainHeight = TerrainMeta.HeightMap.GetHeight(worldPosition);
                             if (worldPosition.y - terrainHeight < -1)
