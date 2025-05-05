@@ -3,9 +3,11 @@
 - Allows automating trains with NPC conductors
 - Allows placing triggers to instruct conductors how to navigate
 - Allows placing spawn points, which spawn workcarts with optional train wagons
+- Allows disabling default underground workcart spawn points
+- Allows configuring automated train engine force and speed
+- Allows automated trains to honk at nearby players
 - Optional default triggers for underground tunnels
-- Optional map markers for automated trains
-- Fully compatible with the new trains from the May and August 2022 Rust updates
+- Optional map markers for automated trains and stops
 - API for creating addon plugins
 
 ## Introduction
@@ -18,7 +20,7 @@ The primary feature of this plugin is to add "triggers" onto train tracks. A tri
 - Run custom server commands
 - Destroy the train
 
-All of the above functions, with the exception of adding a conductor, only apply to trains that have a conductor, meaning that player-driven trains can pass through most triggers unaffected.
+All of the above functions, except adding a conductor, only apply to trains that have a conductor, meaning that player-driven trains can pass through most triggers unaffected.
 
 A trigger can also serve as a workcart spawn point, with an optional number of attached wagons and workcarts.
 
@@ -241,6 +243,33 @@ Default configuration:
       "Skin": 0
     }
   ],
+  "Automated train engine overrides": {
+    "assets/content/vehicles/sedan_a/sedanrail.entity.prefab": {
+      "Enable engine overrides": false,
+      "Override max speed": 44.0,
+      "Override engine force": 10000.0
+    },
+    "assets/content/vehicles/trains/locomotive/locomotive.entity.prefab": {
+      "Enable engine overrides": false,
+      "Override max speed": 20.0,
+      "Override engine force": 250000.0
+    },
+    "assets/content/vehicles/trains/workcart/workcart.entity.prefab": {
+      "Enable engine overrides": false,
+      "Override max speed": 21.0,
+      "Override engine force": 33000.0
+    },
+    "assets/content/vehicles/trains/workcart/workcart_aboveground.entity.prefab": {
+      "Enable engine overrides": false,
+      "Override max speed": 18.0,
+      "Override engine force": 30000.0
+    },
+    "assets/content/vehicles/trains/workcart/workcart_aboveground2.entity.prefab": {
+      "Enable engine overrides": false,
+      "Override max speed": 17.0,
+      "Override engine force": 30000.0
+    }
+  },
   "Map markers": {
     "Train map markers": {
       "Map marker update interval seconds": 5.0,
@@ -306,6 +335,16 @@ Default configuration:
 - `Disable default tunnel workcart spawn points` (`true` or `false`) -- While `true`, vanilla workcart spawn points at train station maintenance tunnels will be disabled, and any existing workcarts spawned by those spawn points will be destroyed when the plugin loads. This enables you to create custom spawn points in the same location, allowing you to use alternative train engines plus optional wagons.
 - `Trigger display distance ` -- Determines how close you must be to a trigger to see it when viewing triggers (e.g., after running `awt.show`).
 - `Conductor outfit` -- Items to use for the outfit of each conductor.
+- `Automated train engine overrides` -- Configure engine settings for automated trains, by prefab path.
+  - Notes:
+    - Non-automated trains are not affected by these settings.
+    - It is not currently possible to override engine settings for specific triggers or spawn points.
+    - The `workcart` prefab is used for underground spawn points.
+    - When you install the plugin, it will automatically discover and add train engine prefabs to the config. If you ever want to reset the values to vanilla, simply delete this section from the config and reload the plugin. The default values in the documentation were from a specific point in time, so they might not be the current vanilla values.
+  - Each prefab has the following options.
+    - `Enable engine overrides` (`true` or `false`) -- Whether to override engine settings for this prefab.
+    - `Override max speed` -- The maximum speed of the train (probably in meters/second).
+    - `Override engine force` -- The engine force of the train. This affects acceleration and braking deceleration.
 - `Map markers`
   - `Train map markers` -- Configure map markers for automated trains.
     - `Map marker update interval seconds` -- The number of seconds between map marker updates. Updating the map markers periodically for many trains can impact performance, so you may adjust this value to trade off between accuracy and performance.

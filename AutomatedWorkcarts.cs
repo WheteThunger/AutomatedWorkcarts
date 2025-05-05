@@ -21,7 +21,7 @@ using static TrainTrackSpline;
 
 namespace Oxide.Plugins
 {
-    [Info("Automated Workcarts", "WhiteThunder", "0.34.3")]
+    [Info("Automated Workcarts", "WhiteThunder", "0.35.0")]
     [Description("Automates workcarts with NPC conductors.")]
     internal class AutomatedWorkcarts : CovalencePlugin
     {
@@ -92,6 +92,17 @@ namespace Oxide.Plugins
 
         private void OnServerInitialized()
         {
+            if (!_config.UsingDefaults)
+            {
+                var addedPrefabs = _config.PopulateConfig();
+                if (addedPrefabs.Count > 0)
+                {
+                    LogWarning($"Discovered and added {addedPrefabs.Count} train engine prefabs to Configuration.\n - {string.Join("\n - ", addedPrefabs)}");
+                    SaveConfig();
+                }
+            }
+
+            _config.OnServerInitialized();
             _mapData = StoredMapData.Load();
             _startupCoroutine = ServerMgr.Instance.StartCoroutine(new TrackedCoroutine(this).WithEnumerator(DoStartupRoutine()));
         }
@@ -740,6 +751,26 @@ namespace Oxide.Plugins
         private bool IsCargoTrain(TrainEngine trainEngine)
         {
             return CargoTrainEvent?.Call("IsTrainSpecial", trainEngine.net.ID) is true;
+        }
+
+        #endregion
+
+        #region Helper Methods - Static
+
+        private static List<T> FindPrefabsOfType<T>() where T : BaseEntity
+        {
+            var prefabList = new List<T>();
+
+            foreach (var assetPath in GameManifest.Current.entities)
+            {
+                var entity = GameManager.server.FindPrefab(assetPath)?.GetComponent<T>();
+                if (entity == null)
+                    continue;
+
+                prefabList.Add(entity);
+            }
+
+            return prefabList;
         }
 
         #endregion
@@ -5225,6 +5256,27 @@ namespace Oxide.Plugins
 
         private class TrainEngineController : FacepunchBehaviour, ITrainCarComponent
         {
+            private struct TrainEngineDefaults
+            {
+                public static TrainEngineDefaults FromTrainEngine(TrainEngine trainEngine)
+                {
+                    return new TrainEngineDefaults
+                    {
+                        MaxSpeed = trainEngine.maxSpeed,
+                        EngineForce = trainEngine.engineForce,
+                    };
+                }
+
+                public float MaxSpeed;
+                public float EngineForce;
+
+                public void ApplyTo(TrainEngine trainEngine)
+                {
+                    trainEngine.maxSpeed = MaxSpeed;
+                    trainEngine.engineForce = EngineForce;
+                }
+            }
+
             public static TrainEngineController AddToEntity(AutomatedWorkcarts plugin, TrainEngine trainEngine, TrainController trainController, bool isReverse = false)
             {
                 var trainEngineController = trainEngine.gameObject.AddComponent<TrainEngineController>();
@@ -5240,6 +5292,7 @@ namespace Oxide.Plugins
             public string NetIdString { get; private set; }
             private AutomatedWorkcarts _plugin;
             private bool _isReverse;
+            private TrainEngineDefaults? _trainEngineDefaults;
 
             public TrainCar TrainCar => TrainEngine;
             public Vector3 Position => Transform.position;
@@ -5253,6 +5306,13 @@ namespace Oxide.Plugins
                 Transform = trainEngine.transform;
                 NetId = trainEngine.net.ID.Value;
                 NetIdString = NetId.ToString();
+
+                var trainEngineOptions = _config.GetTrainEngineOptions(trainEngine);
+                if (trainEngineOptions != null)
+                {
+                    _trainEngineDefaults = TrainEngineDefaults.FromTrainEngine(trainEngine);
+                    trainEngineOptions.ApplyTo(trainEngine);
+                }
 
                 _isReverse = isReverse;
 
@@ -5386,6 +5446,7 @@ namespace Oxide.Plugins
 
                 if (TrainEngine != null && !TrainEngine.IsDestroyed)
                 {
+                    _trainEngineDefaults?.ApplyTo(TrainEngine);
                     DisableUnlimitedFuel();
                     EnableHazardChecks();
                     EnableTrainCoupling(TrainEngine.completeTrain);
@@ -5851,6 +5912,28 @@ namespace Oxide.Plugins
         }
 
         [JsonObject(MemberSerialization.OptIn)]
+        private class TrainEngineOptions
+        {
+            [JsonProperty("Enable engine overrides")]
+            public bool Enabled;
+
+            [JsonProperty("Override max speed")]
+            public float MaxSpeed;
+
+            [JsonProperty("Override engine force")]
+            public float EngineForce;
+
+            public void ApplyTo(TrainEngine trainEngine)
+            {
+                if (Enabled)
+                {
+                    trainEngine.maxSpeed = MaxSpeed;
+                    trainEngine.engineForce = EngineForce;
+                }
+            }
+        }
+
+        [JsonObject(MemberSerialization.OptIn)]
         private class ColorMarkerOptions
         {
             [JsonProperty("Enabled")]
@@ -6108,11 +6191,16 @@ namespace Oxide.Plugins
             [JsonProperty("MapMarkerUpdateIntervalSeconds")]
             private float DeprecatedMapMarkerUpdateIntervalSeconds { set => MapMarkers.Train.UpdateIntervalSeconds = value; }
 
+            [JsonProperty("Automated train engine overrides")]
+            public Dictionary<string, TrainEngineOptions> TrainEngineOptionsByPrefabName = new();
+
             [JsonProperty("Map markers")]
             public MarkerOptions MapMarkers = new();
 
             [JsonProperty("TriggerDisplayDistance")]
             private float DeprecatedTriggerDisplayDistance { set => TriggerDisplayDistance = value; }
+
+            private Dictionary<ulong, TrainEngineOptions> TrainEngineOptionsMapByPrefabId = new();
 
             public void Init()
             {
@@ -6161,6 +6249,49 @@ namespace Oxide.Plugins
 
                 return TrackSelection.Left;
             }
+
+            public void OnServerInitialized()
+            {
+                foreach (var (prefabName, engineOptions) in TrainEngineOptionsByPrefabName)
+                {
+                    var prefab = GameManager.server.FindPrefab(prefabName)?.GetComponent<TrainEngine>();
+                    if (prefab == null)
+                    {
+                        LogError($"Invalid or incorrect prefab in config -- {prefabName}");
+                    }
+                    else
+                    {
+                        TrainEngineOptionsMapByPrefabId[prefab.prefabID] = engineOptions;
+                    }
+                }
+            }
+
+            public List<string> PopulateConfig()
+            {
+                var addedPrefabs = new List<string>();
+
+                foreach (var entityPrefab in FindPrefabsOfType<TrainEngine>())
+                {
+                    if (TrainEngineOptionsByPrefabName.ContainsKey(entityPrefab.PrefabName))
+                        continue;
+
+                    TrainEngineOptionsByPrefabName[entityPrefab.PrefabName] = new TrainEngineOptions
+                    {
+                        Enabled = false,
+                        MaxSpeed = entityPrefab.maxSpeed,
+                        EngineForce = entityPrefab.engineForce,
+                    };
+
+                    addedPrefabs.Add(entityPrefab.PrefabName);
+                }
+
+                return addedPrefabs;
+            }
+
+            public TrainEngineOptions GetTrainEngineOptions(TrainEngine trainEngine)
+            {
+                return TrainEngineOptionsMapByPrefabId.GetValueOrDefault(trainEngine.prefabID);
+            }
         }
 
         private Configuration GetDefaultConfig() => new();
@@ -6171,6 +6302,8 @@ namespace Oxide.Plugins
 
         private class SerializableConfiguration
         {
+            public bool UsingDefaults;
+
             public string ToJson() => JsonConvert.SerializeObject(this);
 
             public Dictionary<string, object> ToDictionary() => JsonHelper.Deserialize(ToJson()) as Dictionary<string, object>;
@@ -6259,6 +6392,7 @@ namespace Oxide.Plugins
                 LogError(e.Message);
                 LogWarning($"Configuration file {Name}.json is invalid; using defaults");
                 LoadDefaultConfig();
+                _config.UsingDefaults = true;
             }
         }
 
