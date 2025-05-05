@@ -4456,7 +4456,7 @@ namespace Oxide.Plugins
             public EngineSpeeds TargetThrottle;
             public bool IsStopping => TargetThrottle == EngineSpeeds.Zero;
 
-            public BrakingState(TrainController trainController, TrainState nextState, EngineSpeeds targetThrottle)
+            public BrakingState(TrainController trainController, EngineSpeeds targetThrottle, TrainState nextState)
                 : base(trainController, nextState)
             {
                 TargetThrottle = targetThrottle;
@@ -4517,7 +4517,7 @@ namespace Oxide.Plugins
             public float CumulativeTimeRemaining => TimeRemaining + (GetNextStateOfType<IdleState>()?.CumulativeTimeRemaining ?? 0);
             public float TimeElapsed => _isIdleDueToCollision || _startTime == 0 ? 0 : Time.time - _startTime;
 
-            public IdleState(TrainController trainController, TrainState nextState, float durationSeconds, bool isIdleDueToCollision = false)
+            public IdleState(TrainController trainController, float durationSeconds, TrainState nextState, bool isIdleDueToCollision = false)
                 : base(trainController, nextState)
             {
                 _durationSeconds = durationSeconds;
@@ -4758,43 +4758,32 @@ namespace Oxide.Plugins
                     var brakeSpeedInstruction = triggerData.GetSpeedInstructionOrZero();
                     if (brakeSpeedInstruction == SpeedInstruction.Zero)
                     {
-                        var finalState = new DrivingState(this, newDepartureThrottle);
-                        var nextState = new IdleState(this, finalState, triggerData.GetStopDuration());
-                        SwitchState(new BrakingState(this, nextState, EngineSpeeds.Zero));
+                        BrakeToStopThenWaitThenDepart(triggerData.GetStopDuration(), newDepartureThrottle);
                         return;
                     }
 
-                    var brakeUntilVelocity = ApplySpeedAndDirection(currentDepartureThrottle, brakeSpeedInstruction, directionInstruction);
-                    SwitchState(new BrakingState(this, new DrivingState(this, brakeUntilVelocity), brakeUntilVelocity));
+                    BrakeUntilVelocity(ApplySpeedAndDirection(currentDepartureThrottle, brakeSpeedInstruction, directionInstruction));
                     return;
                 }
 
                 var speedInstruction = triggerData.GetSpeedInstruction();
                 if (speedInstruction == SpeedInstruction.Zero)
                 {
-                    if (TrainState is BrakingState brakingState)
+                    if (TrainState is BrakingState)
                     {
-                        // Update brake-to speed.
-                        brakingState.TargetThrottle = EngineSpeeds.Zero;
+                        // If already brake, treat this as a brake-to-stop trigger.
+                        BrakeToStopThenWaitThenDepart(triggerData.GetStopDuration(), newDepartureThrottle);
                         return;
                     }
 
                     // Trigger with speed Zero, but no braking.
-                    SwitchState(new IdleState(this, new DrivingState(this, newDepartureThrottle), triggerData.GetStopDuration()));
+                    IdleThenDepart(triggerData.GetStopDuration(), newDepartureThrottle);
                     return;
                 }
 
                 var nextThrottle = ApplySpeedAndDirection(currentDepartureThrottle, speedInstruction, directionInstruction);
 
-                if (TrainState is DrivingState drivingState)
-                {
-                    drivingState.Throttle = nextThrottle;
-                }
-                else
-                {
-                    SwitchState(new DrivingState(this, nextThrottle));
-                }
-
+                EnsureDrivingState(nextThrottle);
                 SetThrottle(nextThrottle);
             }
 
@@ -4809,7 +4798,7 @@ namespace Oxide.Plugins
                     return;
 
                 DelaySeconds = Mathf.Max(scheduleAdjustment, DelaySeconds);
-                SwitchState(new IdleState(this, TrainState, CollisionIdleSeconds, isIdleDueToCollision: true));
+                SwitchState(new IdleState(this, CollisionIdleSeconds, TrainState, isIdleDueToCollision: true));
             }
 
             public void ReduceDelay(float amount)
@@ -4886,6 +4875,37 @@ namespace Oxide.Plugins
                 {
                     PrimaryTrainEngine.EnableGlobalBroadcast(false);
                 }
+            }
+
+            private void EnsureDrivingState(EngineSpeeds throttle)
+            {
+                if (TrainState is DrivingState drivingState)
+                {
+                    drivingState.Throttle = throttle;
+                }
+                else
+                {
+                    SwitchState(new DrivingState(this, throttle));
+                }
+            }
+
+            private void IdleThenDepart(float durationSeconds, EngineSpeeds departureThrottle)
+            {
+                SwitchState(new IdleState(this, durationSeconds,
+                    new DrivingState(this, departureThrottle)));
+            }
+
+            private void BrakeToStopThenWaitThenDepart(float stopDuration, EngineSpeeds departureThrottle)
+            {
+                SwitchState(new BrakingState(this, EngineSpeeds.Zero,
+                    new IdleState(this, stopDuration,
+                        new DrivingState(this, departureThrottle))));
+            }
+
+            private void BrakeUntilVelocity(EngineSpeeds targetThrottle)
+            {
+                SwitchState(new BrakingState(this, targetThrottle,
+                    new DrivingState(this, targetThrottle)));
             }
 
             private Color DetermineMarkerColor()
