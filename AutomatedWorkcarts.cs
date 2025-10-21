@@ -3962,13 +3962,6 @@ namespace Oxide.Plugins
 
             private void ShowNearbyTriggers(BasePlayer player, Vector3 playerPosition, string routeName)
             {
-                var isAdmin = player.IsAdmin;
-                if (!isAdmin)
-                {
-                    player.SetPlayerFlag(BasePlayer.PlayerFlags.IsAdmin, true);
-                    player.SendNetworkUpdateImmediate();
-                }
-
                 foreach (var triggerController in _triggerControllers.Values)
                 {
                     foreach (var triggerInstance in triggerController.TriggerInstanceList)
@@ -3978,12 +3971,6 @@ namespace Oxide.Plugins
                             ShowTrigger(player, triggerInstance, routeName, triggerController.TriggerInstanceList.Length);
                         }
                     }
-                }
-
-                if (!isAdmin)
-                {
-                    player.SetPlayerFlag(BasePlayer.PlayerFlags.IsAdmin, false);
-                    player.SendNetworkUpdateImmediate();
                 }
             }
 
