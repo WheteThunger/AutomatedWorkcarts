@@ -773,6 +773,70 @@ namespace Oxide.Plugins
             return prefabList;
         }
 
+        private static BaseMountable GetDriverSeat(TrainEngine trainEngine)
+        {
+            foreach (var mountPoint in trainEngine.mountPoints)
+            {
+                if (mountPoint.isDriver)
+                    return mountPoint.mountable;
+            }
+
+            return null;
+        }
+
+        private struct TrainPassengerInfo
+        {
+            public bool HasPlayerDriver;
+            public bool HasNpcDriver;
+            public bool HasPlayerPassenger;
+            public bool HasNpcPassenger;
+
+            public bool HasDriver => HasPlayerDriver || HasNpcDriver;
+            public bool HasPassenger => HasPlayerPassenger || HasNpcPassenger;
+            public bool HasAnyOccupant => HasDriver || HasPassenger;
+        }
+
+        private static TrainPassengerInfo GetPassengerInfo(CompleteTrain completeTrain)
+        {
+            var passengerInfo = new TrainPassengerInfo();
+
+            foreach (var trainCar in completeTrain.trainCars)
+            {
+                foreach (var child in trainCar.children)
+                {
+                    if (child is not BasePlayer basePlayer)
+                        continue;
+
+                    if (basePlayer.userID.IsSteamId())
+                    {
+                        passengerInfo.HasPlayerPassenger = true;
+                    }
+                    else
+                    {
+                        passengerInfo.HasNpcPassenger = true;
+                    }
+                }
+
+                if (trainCar is TrainEngine trainEngine)
+                {
+                    var driverSeat = GetDriverSeat(trainEngine);
+                    if (driverSeat.GetMounted() is not { } basePlayer)
+                        continue;
+
+                    if (basePlayer.userID.IsSteamId())
+                    {
+                        passengerInfo.HasPlayerDriver = true;
+                    }
+                    else
+                    {
+                        passengerInfo.HasNpcDriver = true;
+                    }
+                }
+            }
+
+            return passengerInfo;
+        }
+
         #endregion
 
         #region Helper Methods - Command Checks
@@ -5170,47 +5234,88 @@ namespace Oxide.Plugins
                     var scheduleAdjustment = 0f;
                     if (forwardController != null)
                     {
+                        // The forward train should always depart early, regardless of who is driving the rear train.
                         scheduleAdjustment = forwardController.DepartEarlyIfStoppedOrStopping();
                     }
-                    else if (_config.BulldozeOffendingWorkcarts)
+
+                    if (otherController != null)
                     {
-                        LogWarning($"Destroying non-automated train due to blocking an automated train.");
-                        ScheduleDestroyTrainCarCinematically(forwardTrainCar);
+                        // Both trains are automated, so make the rear train back off.
+                        backwardController.PauseEngine(scheduleAdjustment);
                         return;
                     }
 
-                    backwardController?.PauseEngine(scheduleAdjustment);
-                }
-                else
-                {
-                    // Going opposite directions or perpendicular.
-                    if (otherController == null)
-                    {
-                        if (_config.BulldozeOffendingWorkcarts)
-                        {
-                            LogWarning($"Destroying non-automated train due to head-on collision with an automated train.");
-                            ScheduleDestroyTrainCarCinematically(otherTrainCar);
-                        }
-                        else
-                        {
-                            TrainController.PauseEngine();
-                        }
-
-                        return;
-                    }
-
-                    // Don't destroy both, since the collision event can happen for both trains in the same frame.
-                    if (TrainController.IsDestroying)
+                    // Only one train is automated.
+                    // If the forward train is automated, then this is the forward train, so do nothing else.
+                    if (forwardController != null)
                         return;
 
-                    LogWarning($"Destroying automated train due to head-on collision with another.");
-                    if (TrainCar.GetTrackSpeed() < otherTrainCar.GetTrackSpeed())
+                    // Only the rear train is automated.
+                    var passengerInfo = GetPassengerInfo(otherTrainCar.completeTrain);
+                    if (passengerInfo.HasAnyOccupant)
                     {
-                        TrainController.ScheduleCinematicDestruction();
+                        if (_config.DestroyOccupiedObstacleTrains)
+                        {
+                            ScheduleDestroyTrainCarCinematically(forwardTrainCar);
+                            LogWarning("Destroyed occupied non-automated train due to blocking an automated train.");
+                        }
                     }
                     else
                     {
-                        otherController.ScheduleCinematicDestruction();
+                        if (_config.DestroyUnoccupiedObstacleTrains)
+                        {
+                            ScheduleDestroyTrainCarCinematically(forwardTrainCar);
+                            LogWarning("Destroyed unoccupied non-automated train due to blocking an automated train.");
+                        }
+                    }
+
+                    // Otherwise, do nothing, let the automated train just push the other train along.
+                }
+                else
+                {
+                    // Both trains are going opposite directions or are perpendicular.
+                    if (otherController != null)
+                    {
+                        // The other train is automated. One must be destroyed.
+                        // Ignore if one is already being destroyed, to prevent destroying both. It's necessary to check
+                        // this because the collision event can happen for both trains in the same frame.
+                        if (TrainController.IsDestroying || otherController.IsDestroying)
+                            return;
+
+                        // Destroy the slower train.
+                        if (TrainCar.GetTrackSpeed() < otherTrainCar.GetTrackSpeed())
+                        {
+                            TrainController.ScheduleCinematicDestruction();
+                        }
+                        else
+                        {
+                            otherController.ScheduleCinematicDestruction();
+                        }
+
+                        LogWarning("Destroyed automated train due to head-on collision with another.");
+                    }
+                    else
+                    {
+                        // The other train is not automated.
+                        var passengerInfo = GetPassengerInfo(otherTrainCar.completeTrain);
+                        if (passengerInfo.HasAnyOccupant)
+                        {
+                            if (_config.DestroyOccupiedObstacleTrains)
+                            {
+                                ScheduleDestroyTrainCarCinematically(otherTrainCar);
+                                LogWarning("Destroyed occupied non-automated train due to head-on collision with an automated train.");
+                            }
+                        }
+                        else
+                        {
+                            if (_config.DestroyUnoccupiedObstacleTrains)
+                            {
+                                ScheduleDestroyTrainCarCinematically(otherTrainCar);
+                                LogWarning("Destroyed unoccupied non-automated train due to head-on collision with an automated train.");
+                            }
+                        }
+
+                        // Otherwise, do nothing, let the automated train just push the other train along.
                     }
                 }
             }
@@ -5336,17 +5441,6 @@ namespace Oxide.Plugins
                 TrainEngine.SetTrackSelection(trackSelection);
             }
 
-            private BaseMountable GetDriverSeat()
-            {
-                foreach (var mountPoint in TrainEngine.mountPoints)
-                {
-                    if (mountPoint.isDriver)
-                        return mountPoint.mountable;
-                }
-
-                return null;
-            }
-
             private void AddOutfit()
             {
                 Conductor.inventory.Strip();
@@ -5367,7 +5461,7 @@ namespace Oxide.Plugins
             {
                 TrainEngine.DismountAllPlayers();
 
-                var driverSeat = GetDriverSeat();
+                var driverSeat = GetDriverSeat(TrainEngine);
                 if (driverSeat == null)
                     return;
 
@@ -6091,10 +6185,30 @@ namespace Oxide.Plugins
             public string DefaultTrackSelection = TrackSelection.Left.ToString();
 
             [JsonProperty("BulldozeOffendingWorkcarts")]
-            private bool DeprecatedBulldozeOffendingWorkcarts { set => BulldozeOffendingWorkcarts = value; }
+            private bool DeprecatedBulldozeOffendingWorkcarts
+            {
+                set
+                {
+                    DestroyUnoccupiedObstacleTrains = value;
+                    DestroyOccupiedObstacleTrains = value;
+                }
+            }
 
             [JsonProperty("Bulldoze offending workcarts")]
-            public bool BulldozeOffendingWorkcarts = false;
+            private bool DeprecatedBulldozeOffendingWorkcarts2
+            {
+                set
+                {
+                    DestroyUnoccupiedObstacleTrains = value;
+                    DestroyOccupiedObstacleTrains = value;
+                }
+            }
+
+            [JsonProperty("Destroy unoccupied obstacle trains")]
+            public bool DestroyUnoccupiedObstacleTrains = false;
+
+            [JsonProperty("Destroy occupied obstacle trains")]
+            public bool DestroyOccupiedObstacleTrains = false;
 
             [JsonProperty("DestroyBarricadesInstantly")]
             private bool DeprecatedDestroyBarricadesInstantly { set => DestroyBarricadesInstantly = value; }

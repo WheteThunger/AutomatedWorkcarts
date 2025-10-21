@@ -214,7 +214,8 @@ Default configuration:
   "Play horn for nearby players in radius": 0.0,
   "Default speed": "Fwd_Hi",
   "Default track selection": "Left",
-  "Bulldoze offending workcarts": false,
+  "Destroy unoccupied obstacle trains": false,
+  "Destroy occupied obstacle trains": false,
   "Destroy barricades instantly": false,
   "Enable map triggers": true,
   "Enable tunnel triggers": {
@@ -320,7 +321,8 @@ Default configuration:
 - `Default track selection` -- Default track selection to use when a train starts being automated.
   - Allowed values: `"Left"` | `"Default"` | `"Right"`.
   - This value is ignored if the train is on a trigger that specifies track selection.
-- `Bulldoze offending workcarts` (`true` or `false`) -- While `true`, automated trains will destroy other non-automated trains in their path.
+- `Destroy unoccupied obstacle trains` (`true` or `false`) -- While `true`, automated trains will destroy other non-automated trains in their path that have no drivers or passengers. While `false`, automated trains will simply push unoccupied trains.
+- `Destroy occupied obstacle trains` (`true` or `false`) -- While `true`, automated trains will destroy other non-automated trains in their path that have drivers or passengers. While `false`, automated trains will simply push occupied trains.
 - `Destroy barricades instantly` (`true` or `false`) -- While `true`, automated trains will destroy train barricades instantly, though the train may still slow down.
   - Regardless of this setting, automated trains may destroy each other in head-on or perpendicular collisions.
 - `Enable map triggers` (`true` or `false`) -- While `false`, existing map-specific triggers will be disabled, and no new map-specific triggers can be added.
@@ -408,12 +410,11 @@ Generally, yes. However, if all trains are automated, the Cargo Train Event will
 
 #### Is it safe to allow player trains and automated trains on the same tracks?
 
-The **best practice** is to have separate, independent tracks for player vs automated trains. However, automated trains do have collision handling logic that makes them somewhat compatible with player tracks.
+The **safest options** is to have separate, independent tracks for player vs automated trains. However, automated trains do have collision handling logic that makes them somewhat compatible with player tracks.
 
-- When an automated train is rear-ended, if it's currently stopping or waiting at a stop, it will depart early.
-- When an automated train collides with another train in front of it, its engine stops for a few seconds to allow the forward train to get some distance. This is especially useful for intersections since it allows one train to attempt passage while the other backs off.
+- When an automated train is rear-ended, if it's currently stopping or waiting at a stop, it will depart early, but will attempt to compensate by waiting an appropriate amount of extra time at one or more future stops.
+- When an automated train collides with a non-automated train in front of it, the automated train will simply push the forward train, unless the appropriate `Destroy * obstacle trains` configuration option is set to `true`.
 - When two automated trains collide head-on, the slower one (or a random one if they are going the same speed) will explode.
-- When an automated train collides with a non-automated train in a manner other than a rear-end, having the `Bulldoze offending workcarts` configuration option set to `true` will cause the non-automated train to be destroyed.
 
 ## Tips for map developers
 
