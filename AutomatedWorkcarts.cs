@@ -21,7 +21,7 @@ using static TrainTrackSpline;
 
 namespace Oxide.Plugins
 {
-    [Info("Automated Workcarts", "WhiteThunder", "0.36.0")]
+    [Info("Automated Workcarts", "WhiteThunder", "0.36.1")]
     [Description("Automates workcarts with NPC conductors.")]
     internal class AutomatedWorkcarts : CovalencePlugin
     {
@@ -5036,7 +5036,8 @@ namespace Oxide.Plugins
             private void MaybeToggleHorn()
             {
                 _plugin.TrackStart();
-                PrimaryTrainEngine.SetFlag(Flag_Horn, ShouldPlayHorn());
+                using var setFlagsScope = PrimaryTrainEngine.StartSetFlags(FlagsUpdateMode.SendNetworkUpdate_Flags);
+                setFlagsScope.Set(Flag_Horn, ShouldPlayHorn());
                 _plugin.TrackEnd();
             }
 
@@ -5486,7 +5487,8 @@ namespace Oxide.Plugins
 
             private void DisableHazardChecks()
             {
-                TrainEngine.SetFlag(Flag_HazardAhead, false);
+                using var setFlagsScope = TrainEngine.StartSetFlags(FlagsUpdateMode.SendNetworkUpdate_Flags);
+                setFlagsScope.Set(Flag_HazardAhead, false);
                 TrainEngine.CancelInvoke(TrainEngine.CheckForHazards);
             }
 
